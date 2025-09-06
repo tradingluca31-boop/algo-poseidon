@@ -494,13 +494,18 @@ int OnInit()
 
 void OnDeinit(const int reason)
 {
-   if(hEMA21!=INVALID_HANDLE) IndicatorRelease(hEMA21);
-    if(hEMA55!=INVALID_HANDLE) IndicatorRelease(hEMA55);
-    if(hSMAfast!=INVALID_HANDLE) IndicatorRelease(hSMAfast);
-    if(hSMAslow!=INVALID_HANDLE) IndicatorRelease(hSMAslow);
-    if(hSMMA50!=INVALID_HANDLE) IndicatorRelease(hSMMA50); // [ADDED]
-    if(hRSI!=INVALID_HANDLE) IndicatorRelease(hRSI);
- }
+   if(hEMA55!=INVALID_HANDLE) IndicatorRelease(hEMA55);
+   if(hSMAfast!=INVALID_HANDLE) IndicatorRelease(hSMAfast);
+   if(hSMAslow!=INVALID_HANDLE) IndicatorRelease(hSMAslow);
+   if(hSMMA50!=INVALID_HANDLE) IndicatorRelease(hSMMA50); // [ADDED]
+   if(hRSI!=INVALID_HANDLE) IndicatorRelease(hRSI);
+   ExportTradeHistory();
+}
+
+void OnTesterDeinit()
+{
+   ExportTradeHistory();
+}
 
 
 
@@ -565,13 +570,20 @@ int CountConsecutiveLosses()
 
 
 
-void ExportTradeHistory(){
+void ExportTradeHistory(string suffix=""){
+
    
    string symbol = _Symbol;
    string csv_data;
    
-   string file_name = StringSubstr(symbol, 0, 6) + "_" + file_suffix + ".csv";
+   string final_suffix = (suffix == "") ? file_suffix : suffix;
+   string file_name = StringSubstr(symbol, 0, 6) + "_" + final_suffix + ".csv";
    int file_handle = FileOpen(file_name, FILE_WRITE | FILE_CSV | FILE_ANSI, 0, CP_UTF8);
+    if(file_handle == INVALID_HANDLE)
+   {
+      PrintFormat("Erreur ouverture fichier %s: %d", file_name, GetLastError());
+      return;
+   }
 
    if(HistorySelect(start_date, end_date)){
       
@@ -681,4 +693,3 @@ void ExportTradeHistory(){
    }
    FileClose(file_handle);
 }
-
