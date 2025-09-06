@@ -502,6 +502,12 @@ void OnDeinit(const int reason)
    ExportTradeHistory();
 }
 
+double OnTester()
+{
+   ExportTradeHistory();
+   return 0.0;
+}
+
 void OnTesterDeinit()
 {
    ExportTradeHistory();
@@ -578,8 +584,9 @@ void ExportTradeHistory(string suffix=""){
    
    string final_suffix = (suffix == "") ? file_suffix : suffix;
    string file_name = StringSubstr(symbol, 0, 6) + "_" + final_suffix + ".csv";
-   int file_handle = FileOpen(file_name, FILE_WRITE | FILE_CSV | FILE_ANSI, 0, CP_UTF8);
-    if(file_handle == INVALID_HANDLE)
+   PrintFormat("ExportTradeHistory: %s", file_name);
+   int file_handle = FileOpen(file_name, FILE_WRITE | FILE_CSV | FILE_ANSI | FILE_COMMON, 0, CP_UTF8);
+   if(file_handle == INVALID_HANDLE)
    {
       PrintFormat("Erreur ouverture fichier %s: %d", file_name, GetLastError());
       return;
@@ -690,6 +697,8 @@ void ExportTradeHistory(string suffix=""){
          }
       }
       printf("%d positions exportées", cnt);
+   } else {
+      PrintFormat("HistorySelect failed: %d", GetLastError());
    }
    FileClose(file_handle);
 }
