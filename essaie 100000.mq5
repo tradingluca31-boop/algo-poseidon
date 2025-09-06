@@ -57,6 +57,10 @@ input int  InpSMMA_Period       = 50;               // Période SMMA (Value=50 /
 input ENUM_TIMEFRAMES InpSMMA_TF = PERIOD_H4;       // UT SMMA (H4)
 input int  InpMinConditions     = 3;                // Conditions minimales requises (Value=3 / Start=2 / Step=1 / Stop=4)
 
+// --- Export des backtests ---
+input bool   InpExportTradesCSV = false;            // Exporter les trades en CSV pendant le backtest
+input string InpCSVFileName     = "backtest_results.csv"; // Nom du fichier CSV
+
 
 //=== Month Filter Inputs START ===========================================
 input bool InpTrade_Janvier   = false;  // Trader en Janvier
@@ -85,6 +89,7 @@ int hEMA21=-1, hEMA55=-1;
 int hSMAfast=-1, hSMAslow=-1;
 
 int hSMMA50 = -1;   // [ADDED] Handle SMMA50
+int gCSVHandle = INVALID_HANDLE; // Handle fichier CSV
 //======================== Utils Temps ======================
 bool IsNewBar(){ datetime ct=iTime(sym, InpSignalTF, 0); if(ct!=lastBarTime){lastBarTime=ct; return true;} return false; }
 
@@ -433,11 +438,48 @@ void OnTick()
 
 
 
+// Enregistre chaque deal dans le CSV pendant le backtest
+void OnTradeTransaction(const MqlTradeTransaction &trans,const MqlTradeRequest &request,const MqlTradeResult &result)
+{
+   if(!InpExportTradesCSV || gCSVHandle==INVALID_HANDLE)
+      return;
+   if(trans.type==TRADE_TRANSACTION_DEAL_ADD)
+   {
+      ulong deal=trans.deal;
+      if(deal>0 && HistoryDealGetInteger(deal,DEAL_ENTRY)==DEAL_ENTRY_OUT)
+      {
+         datetime t=(datetime)HistoryDealGetInteger(deal,DEAL_TIME);
+         string symbol=HistoryDealGetString(deal,DEAL_SYMBOL);
+         double volume=HistoryDealGetDouble(deal,DEAL_VOLUME);
+         long dtype=HistoryDealGetInteger(deal,DEAL_TYPE);
+         string typeStr=(dtype==DEAL_TYPE_BUY)?"BUY":"SELL";
+         ulong posId=(ulong)HistoryDealGetInteger(deal,DEAL_POSITION_ID);
+         HistorySelect(0,t);
+         double entry=HistoryPositionGetDouble(posId,POSITION_PRICE_OPEN);
+         double exit=HistoryDealGetDouble(deal,DEAL_PRICE);
+         double profit=HistoryDealGetDouble(deal,DEAL_PROFIT)
+                      +HistoryDealGetDouble(deal,DEAL_COMMISSION)
+                      +HistoryDealGetDouble(deal,DEAL_SWAP);
+         FileWrite(gCSVHandle,TimeToString(t,TIME_DATE|TIME_SECONDS),symbol,typeStr,
+                   DoubleToString(volume,2),DoubleToString(entry,_Digits),
+                   DoubleToString(exit,_Digits),DoubleToString(profit,2));
+      }
+   }
+}
 
 //======================== Events ==========================
 int OnInit()
 {
    sym=_Symbol; dig=(int)SymbolInfoInteger(sym,SYMBOL_DIGITS); pt=SymbolInfoDouble(sym,SYMBOL_POINT);
+
+   if(InpExportTradesCSV)
+   {
+      gCSVHandle = FileOpen(InpCSVFileName, FILE_WRITE|FILE_CSV|FILE_COMMON);
+      if(gCSVHandle!=INVALID_HANDLE)
+         FileWrite(gCSVHandle, "Time","Symbol","Type","Volume","Entry","Exit","Profit");
+      else
+         Print("Impossible d'ouvrir le fichier CSV: ", GetLastError());
+   }
 
    hEMA21=iMA(sym,InpSignalTF,21,0,MODE_EMA,PRICE_CLOSE);
    hEMA55=iMA(sym,InpSignalTF,55,0,MODE_EMA,PRICE_CLOSE);
@@ -457,6 +499,7 @@ void OnDeinit(const int reason)
    if(hSMAfast!=INVALID_HANDLE) IndicatorRelease(hSMAfast);
    if(hSMAslow!=INVALID_HANDLE) IndicatorRelease(hSMAslow);
    if(hSMMA50!=INVALID_HANDLE) IndicatorRelease(hSMMA50); // [ADDED]
+   if(gCSVHandle!=INVALID_HANDLE) FileClose(gCSVHandle);
 }
 
 
