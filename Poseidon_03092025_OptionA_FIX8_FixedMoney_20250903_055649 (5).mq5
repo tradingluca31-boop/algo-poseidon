@@ -58,6 +58,15 @@ input ENUM_TIMEFRAMES InpSMMA_TF = PERIOD_H4;       // UT SMMA (H4)
 input int  InpMinConditions     = 3;                // Conditions minimales requises (Value=3 / Start=2 / Step=1 / Stop=4)
 
 
+// --- Filtre RSI veto ---
+input bool            InpUseRSI          = true;     // Active/désactive le filtre
+input ENUM_TIMEFRAMES InpRSI_TF          = PERIOD_H4;// UT du RSI
+input int             InpRSI_Period      = 14;       // Période RSI (Value=14 / Start=7 / Step=1 / Stop=28)
+input double          InpRSI_Overbought  = 70.0;     // Seuil haut (Value=70 / Start=60 / Step=5 / Stop=80)
+input double          InpRSI_Oversold    = 25.0;     // Seuil bas (Value=25 / Start=15 / Step=5 / Stop=35)
+input bool            InpRSI_BlockOnError= true;     // Bloque si RSI indisponible
+
+
 //=== Month Filter Inputs START ===========================================
 input bool InpTrade_Janvier   = false;  // Trader en Janvier
 input bool InpTrade_Fevrier   = false;  // Trader en Fevrier
@@ -85,6 +94,7 @@ int hEMA21=-1, hEMA55=-1;
 int hSMAfast=-1, hSMAslow=-1;
 
 int hSMMA50 = -1;   // [ADDED] Handle SMMA50
+int hRSI    = -1;   // Handle RSI veto
 //======================== Utils Temps ======================
 bool IsNewBar(){ datetime ct=iTime(sym, InpSignalTF, 0); if(ct!=lastBarTime){lastBarTime=ct; return true;} return false; }
 
@@ -310,6 +320,34 @@ void TryOpenTrade()
    if(!InEntryWindow()) return;
    if(!CanOpenToday()) return;
 
+   // --- Filtre RSI veto ---
+   if(InpUseRSI)
+   {
+      if(hRSI==INVALID_HANDLE)
+      {
+         if(InpRSI_BlockOnError) return;
+         Print("[RSI] handle invalide");
+      }
+      else
+      {
+         double rsiBuf[]; ArraySetAsSeries(rsiBuf,true);
+         if(CopyBuffer(hRSI,0,1,1,rsiBuf)<1)
+         {
+            if(InpRSI_BlockOnError) return;
+            Print("[RSI] valeur indisponible");
+         }
+         else
+         {
+            double rsi = rsiBuf[0];
+            if(rsi>=InpRSI_Overbought || rsi<=InpRSI_Oversold)
+            {
+               if(InpVerboseLogs) PrintFormat("[RSI] Veto %.2f", rsi);
+               return;
+            }
+         }
+      }
+   }
+
    // [CHANGED] Scoring 4 conditions (SMMA + EMA + MACD_hist + MACD_cross) + filtre SMMA directionnel
 int scoreBuy=0, scoreSell=0;
 
@@ -439,25 +477,28 @@ int OnInit()
 {
    sym=_Symbol; dig=(int)SymbolInfoInteger(sym,SYMBOL_DIGITS); pt=SymbolInfoDouble(sym,SYMBOL_POINT);
 
-   hEMA21=iMA(sym,InpSignalTF,21,0,MODE_EMA,PRICE_CLOSE);
-   hEMA55=iMA(sym,InpSignalTF,55,0,MODE_EMA,PRICE_CLOSE);
-   hSMAfast=iMA(sym,InpSignalTF,InpMACD_Fast,0,MODE_SMA,PRICE_CLOSE);
-   hSMAslow=iMA(sym,InpSignalTF,InpMACD_Slow,0,MODE_SMA,PRICE_CLOSE);
-   if(InpUseSMMA50Trend) hSMMA50 = iMA(sym, InpSMMA_TF, InpSMMA_Period, 0, MODE_SMMA, PRICE_CLOSE);
-   if(hEMA21==INVALID_HANDLE || hEMA55==INVALID_HANDLE || hSMAfast==INVALID_HANDLE || hSMAslow==INVALID_HANDLE || (InpUseSMMA50Trend && hSMMA50==INVALID_HANDLE)){
-      Print("Erreur: handle indicateur invalide"); return INIT_FAILED;
-   }
-   return INIT_SUCCEEDED;
-}
+    hEMA21=iMA(sym,InpSignalTF,21,0,MODE_EMA,PRICE_CLOSE);
+    hEMA55=iMA(sym,InpSignalTF,55,0,MODE_EMA,PRICE_CLOSE);
+    hSMAfast=iMA(sym,InpSignalTF,InpMACD_Fast,0,MODE_SMA,PRICE_CLOSE);
+    hSMAslow=iMA(sym,InpSignalTF,InpMACD_Slow,0,MODE_SMA,PRICE_CLOSE);
+    if(InpUseSMMA50Trend) hSMMA50 = iMA(sym, InpSMMA_TF, InpSMMA_Period, 0, MODE_SMMA, PRICE_CLOSE);
+    hRSI = iRSI(sym, InpRSI_TF, InpRSI_Period, PRICE_CLOSE);
+    if(hEMA21==INVALID_HANDLE || hEMA55==INVALID_HANDLE || hSMAfast==INVALID_HANDLE || hSMAslow==INVALID_HANDLE ||
+       (InpUseSMMA50Trend && hSMMA50==INVALID_HANDLE) || hRSI==INVALID_HANDLE){
+       Print("Erreur: handle indicateur invalide"); return INIT_FAILED;
+    }
+    return INIT_SUCCEEDED;
+ }
 
 void OnDeinit(const int reason)
 {
    if(hEMA21!=INVALID_HANDLE) IndicatorRelease(hEMA21);
-   if(hEMA55!=INVALID_HANDLE) IndicatorRelease(hEMA55);
-   if(hSMAfast!=INVALID_HANDLE) IndicatorRelease(hSMAfast);
-   if(hSMAslow!=INVALID_HANDLE) IndicatorRelease(hSMAslow);
-   if(hSMMA50!=INVALID_HANDLE) IndicatorRelease(hSMMA50); // [ADDED]
-}
+    if(hEMA55!=INVALID_HANDLE) IndicatorRelease(hEMA55);
+    if(hSMAfast!=INVALID_HANDLE) IndicatorRelease(hSMAfast);
+    if(hSMAslow!=INVALID_HANDLE) IndicatorRelease(hSMAslow);
+    if(hSMMA50!=INVALID_HANDLE) IndicatorRelease(hSMMA50); // [ADDED]
+    if(hRSI!=INVALID_HANDLE) IndicatorRelease(hRSI);
+ }
 
 
 
