@@ -16,6 +16,12 @@ input long     InpMagic                = 20250811;
 input bool     InpAllowBuys            = true;
 input bool     InpAllowSells           = true;
 
+// --- Export CSV Inputs ---
+input bool     InpAutoExportOnDeinit   = false;        // Export automatique à la fermeture de l'EA
+input datetime InpExportStartDate      = D'2000.01.01'; // Date début export
+input datetime InpExportEndDate        = D'2045.01.01'; // Date fin export
+input string   InpFileSuffix           = "POSEIDON";    // Suffixe du fichier CSV
+
 // --- Choix des signaux ---
 enum SignalMode { EMA_OR_MACD=0, EMA_ONLY=1, MACD_ONLY=2 };
 input SignalMode InpSignalMode         = EMA_OR_MACD; // "OU" par défaut
@@ -29,12 +35,12 @@ input int      InpMACD_Signal          = 15;          // SMA du MACD
 
 // --- Risque / gestion (en %) ---
 input double InpRiskPercent        = 1.0;   // % de la BALANCE risqué par trade
-// [ADDED] Poseidon 03/09/2025 Option A — réduction du risque après série de pertes
+// [ADDED] Poseidon 03/09/2025 Option A – réduction du risque après série de pertes
 input bool   UseLossStreakReduction = true;   // ON/OFF
 input int    LossStreakTrigger      = 7;      // Value=7 / Start=3 / Step=1 / Stop=15
 input double LossStreakFactor       = 0.50;   // Value=0.50 / Start=0.20 / Step=0.10 / Stop=1.00
 
-// [ADDED] Poseidon 03/09/2025 Option A — RISQUE EN MONTANT FIXE (devise du compte)
+// [ADDED] Poseidon 03/09/2025 Option A – RISQUE EN MONTANT FIXE (devise du compte)
 input bool   UseFixedRiskMoney = true;   // Utiliser un montant fixe (€) au lieu du %
 input double FixedRiskMoney     = 100.0; // Montant risqué par trade (ex: 100€)
 input double ReducedRiskMoney   = 50.0;  // Montant risqué sous série de pertes (ex: 50€)
@@ -43,7 +49,6 @@ input double InpSL_PercentOfPrice  = 0.25;  // SL = % du prix d'entrée (ex: 0.2
 input double InpTP_PercentOfPrice  = 1.25;  // TP = % du prix d'entrée
 input double InpBE_TriggerPercent  = 0.70;  // Passer BE quand le prix a évolué de +0.70% depuis l'entrée
 input int    InpMaxTradesPerDay    = 2;
-
 
 // --- Fenêtre d'ouverture ---
 input ENUM_TIMEFRAMES InpSignalTF      = PERIOD_H1;   // TF signaux (H1)
@@ -56,11 +61,6 @@ input bool InpUseSMMA50Trend    = true;             // Filtre tendance SMMA50
 input int  InpSMMA_Period       = 50;               // Période SMMA (Value=50 / Start=20 / Step=5 / Stop=200)
 input ENUM_TIMEFRAMES InpSMMA_TF = PERIOD_H4;       // UT SMMA (H4)
 input int  InpMinConditions     = 3;                // Conditions minimales requises (Value=3 / Start=2 / Step=1 / Stop=4)
-
-// --- Export des backtests ---
-input bool   InpExportTradesCSV = false;            // Exporter les trades en CSV pendant le backtest
-input string InpCSVFileName     = "backtest_results.csv"; // Nom du fichier CSV
-
 
 //=== Month Filter Inputs START ===========================================
 input bool InpTrade_Janvier   = false;  // Trader en Janvier
@@ -77,19 +77,134 @@ input bool InpTrade_Novembre  = true;   // Trader en Novembre
 input bool InpTrade_Decembre  = true;   // Trader en Decembre
 //=== Month Filter Inputs END =============================================
 
-
 //======================== Variables ========================
 datetime lastBarTime=0;
 string   sym; int dig; double pt;
 int tradedDay=-1, tradesCountToday=0;
-int gLossStreak = 0;   // [ADDED] Compteur pertes consécutives — Poseidon 03/09/2025 Option A
+int gLossStreak = 0;   // [ADDED] Compteur pertes consécutives – Poseidon 03/09/2025 Option A
 
 // Handles EMA/MAs pour MACD SMA
 int hEMA21=-1, hEMA55=-1;
 int hSMAfast=-1, hSMAslow=-1;
 
 int hSMMA50 = -1;   // [ADDED] Handle SMMA50
-int gCSVHandle = INVALID_HANDLE; // Handle fichier CSV
+
+//======================== CSV Export Function ========================
+void ExportTradeHistory(){
+   string symbol = _Symbol;
+   string csv_data;
+   
+   string file_name = StringSubstr(symbol, 0, 6) + "_" + InpFileSuffix + ".csv";
+   int file_handle = FileOpen(file_name, FILE_WRITE | FILE_CSV | FILE_ANSI, 0, CP_UTF8);
+
+   if(HistorySelect(InpExportStartDate, InpExportEndDate)){
+      
+      csv_data = "magic,symbol,type,time_open,time_close,price_open,price_close,stop_loss,take_profit,volume,position_pnl,position_pnl_pips,swap,swap_pips,commission,commission_pips,total_pnl,total_pnl_pips,position_id,comment";
+      FileWrite(file_handle, csv_data);
+
+      ulong deal_in_ticket = -1;
+      int deals_total = HistoryDealsTotal();
+      ulong positions[];
+      ArrayResize(positions, deals_total, true);
+      int position_cnt = 0;
+      int size = 0;
+
+      for(int i = 0; i < deals_total; i++){
+         deal_in_ticket = HistoryDealGetTicket(i);
+         if(deal_in_ticket > 0 && HistoryDealGetInteger(deal_in_ticket, DEAL_ENTRY) == DEAL_ENTRY_IN){
+            ulong position_id = HistoryDealGetInteger(deal_in_ticket, DEAL_POSITION_ID);
+            
+            if(HistoryDealGetInteger(deal_in_ticket, DEAL_TYPE) > 1) continue;
+            
+            bool is_dupe = false;
+            
+            for(int j = 0; j < size; j++){
+               if(positions[j] == position_id){
+                  is_dupe = true;
+                  break;
+               }
+            }
+            if(!is_dupe){
+               positions[size++] = position_id;
+            }
+         }
+      }
+
+      int cnt = 0;
+      for(int i = 0; i < size; i++){
+         ulong position_id = positions[i];
+         long magic_number = -1, direction = -1, close_time = -1, open_time = -1;
+         double open_price = -1, close_price = -1, deal_volume = 0;
+         double take_profit = -1, stop_loss = -1, profit = 0, swap = 0, commission = 0;
+         string comment = "";
+
+         if(HistorySelectByPosition(position_id)){
+            cnt++;
+            int _history_deals_by_pos = HistoryDealsTotal();
+
+            for(int j = 0; j < _history_deals_by_pos; j++){
+               ulong deal_ticket = HistoryDealGetTicket(j);
+               
+               if(deal_ticket == 0) continue;
+                
+               if(HistoryDealGetInteger(deal_ticket, DEAL_ENTRY) == DEAL_ENTRY_OUT){
+                  close_time = HistoryDealGetInteger(deal_ticket, DEAL_TIME);
+                  close_price = HistoryDealGetDouble(deal_ticket, DEAL_PRICE);
+                  deal_volume += HistoryDealGetDouble(deal_ticket, DEAL_VOLUME);
+               }
+               if(HistoryDealGetInteger(deal_ticket, DEAL_ENTRY) == DEAL_ENTRY_IN){
+                  direction = HistoryDealGetInteger(deal_ticket, DEAL_TYPE);
+                  open_time = HistoryDealGetInteger(deal_ticket, DEAL_TIME);
+                  open_price = HistoryDealGetDouble(deal_ticket, DEAL_PRICE);
+                  stop_loss = HistoryDealGetDouble(deal_ticket, DEAL_SL);
+                  take_profit = HistoryDealGetDouble(deal_ticket, DEAL_TP);
+               }
+               magic_number = HistoryDealGetInteger(deal_ticket, DEAL_MAGIC);
+               symbol = HistoryDealGetString(deal_ticket, DEAL_SYMBOL);
+               commission += HistoryDealGetDouble(deal_ticket, DEAL_COMMISSION);
+               swap += HistoryDealGetDouble(deal_ticket, DEAL_SWAP);
+               profit += HistoryDealGetDouble(deal_ticket, DEAL_PROFIT);
+               comment += HistoryDealGetString(deal_ticket, DEAL_COMMENT) + "/";
+            }
+
+            double tick_value_profit = SymbolInfoDouble(symbol, SYMBOL_TRADE_TICK_VALUE_PROFIT);
+            double tick_value_loss = SymbolInfoDouble(symbol, SYMBOL_TRADE_TICK_VALUE_LOSS);
+            double tick_size = SymbolInfoDouble(symbol, SYMBOL_TRADE_TICK_SIZE);
+            double points = SymbolInfoDouble(symbol, SYMBOL_POINT);
+            int digits = (int)SymbolInfoInteger(symbol, SYMBOL_DIGITS);
+
+            double total_profit = profit + swap + commission;
+            double tick_value = (profit < 0) ? tick_value_loss : tick_value_profit;
+
+            csv_data = IntegerToString(magic_number) + ",";
+            csv_data += symbol + ",";
+            csv_data += IntegerToString(int(direction)) + ",";
+            csv_data += IntegerToString(open_time) + ",";
+            csv_data += IntegerToString(close_time) + ",";
+            csv_data += DoubleToString(open_price, digits) + ",";
+            csv_data += DoubleToString(close_price, digits) + ",";
+            csv_data += DoubleToString(stop_loss, digits) + ",";
+            csv_data += DoubleToString(take_profit, digits) + ",";
+            csv_data += DoubleToString(deal_volume, 2) + ",";
+            csv_data += DoubleToString(profit, 2) + ",";
+            csv_data += DoubleToString(profit / (deal_volume / tick_size * tick_value) / points / 10, 2) + ",";
+            csv_data += DoubleToString(swap, 2) + ",";
+            csv_data += DoubleToString(swap / (deal_volume / tick_size * tick_value) / points / 10, 2) + ",";
+            csv_data += DoubleToString(commission, 2) + ",";
+            csv_data += DoubleToString(commission / (deal_volume / tick_size * tick_value) / points / 10, 2) + ",";
+            csv_data += DoubleToString(total_profit, 2) + ",";
+            csv_data += DoubleToString(total_profit / (deal_volume / tick_size * tick_value) / points / 10, 2) + ",";
+            csv_data += IntegerToString(position_id) + ",";
+            csv_data += comment;
+
+            FileWrite(file_handle, csv_data);
+         }
+      }
+      printf("%d positions exportées vers %s", cnt, file_name);
+   }
+   FileClose(file_handle);
+}
+
 //======================== Utils Temps ======================
 bool IsNewBar(){ datetime ct=iTime(sym, InpSignalTF, 0); if(ct!=lastBarTime){lastBarTime=ct; return true;} return false; }
 
@@ -213,7 +328,7 @@ bool GetEMACrossSignal(bool &buy,bool &sell)
    return true;
 }
 
-// MACD (SMA-based existant) — croisement des lignes
+// MACD (SMA-based existant) – croisement des lignes
 bool GetMACD_CrossSignal(bool &buy,bool &sell)
 {
    buy=false; sell=false;
@@ -224,7 +339,7 @@ bool GetMACD_CrossSignal(bool &buy,bool &sell)
    return true;
 }
 
-// MACD — histogramme (MAIN - SIGNAL)
+// MACD – histogramme (MAIN - SIGNAL)
 bool GetMACD_HistSignal(bool &buy,bool &sell)
 {
    buy=false; sell=false;
@@ -235,7 +350,6 @@ bool GetMACD_HistSignal(bool &buy,bool &sell)
    sell = (hist < 0.0);
    return true;
 }
-
 
 //======================== Prix/SL/TP ========================
 void MakeSL_Init(int dir,double entry,double &sl)
@@ -278,7 +392,7 @@ double LossPerLotAtSL(int dir,double entry,double sl)
 double LotsFromRisk(int dir,double entry,double sl)
 {
    double equity=AccountInfoDouble(ACCOUNT_EQUITY);
-// [CHANGED] Poseidon 03/09/2025 Option A — risque en € fixe + réduction série
+// [CHANGED] Poseidon 03/09/2025 Option A – risque en € fixe + réduction série
 double riskMoney = equity*(InpRiskPercent/100.0); // fallback %
 if(UseFixedRiskMoney)
    riskMoney = FixedRiskMoney;
@@ -355,8 +469,6 @@ if(dir==0) return;
 double tpPrice = (dir>0 ? entry*(1.0 + InpTP_PercentOfPrice/100.0)
                         : entry*(1.0 - InpTP_PercentOfPrice/100.0));
 
-
-
    Trade.SetExpertMagicNumber(InpMagic);
    Trade.SetDeviationInPoints(InpSlippagePoints);
    string cmt="BASE";
@@ -387,177 +499,4 @@ void ManageBreakEvenPercent(const string symbol_)   // nom changé pour ne pas m
 
       // Seuil BE : +0.70% depuis l'entrée OU 3R
       const double beTrigger = (type==POSITION_TYPE_BUY)
-                               ? entry*(1.0 + InpBE_TriggerPercent/100.0)
-                               : entry*(1.0 - InpBE_TriggerPercent/100.0);
-      const bool condPercent = (type==POSITION_TYPE_BUY) ? (price>=beTrigger) : (price<=beTrigger);
-
-      const double R    = MathAbs(entry - sl);              // 1R en prix
-      const double move = MathAbs(price - entry);
-      const bool   cond3R = (R>0.0 && move >= 3.0*R);
-
-      if(condPercent || cond3R)
-      {
-         const int    d       = (int)SymbolInfoInteger(symbol_, SYMBOL_DIGITS);
-         const double ptLocal = SymbolInfoDouble(symbol_, SYMBOL_POINT);  // <— nom différent
-
-         double targetSL = NormalizeDouble(entry, d);       // BE = SL à l’entrée
-         bool need = (type==POSITION_TYPE_BUY)  ? (sl < targetSL - 10*ptLocal)
-                                                : (sl > targetSL + 10*ptLocal);
-
-         if(need){
-            Trade.PositionModify(symbol_, targetSL, tp);
-            // log utile
-            PrintFormat("[BE] %s entry=%.2f price=%.2f move=%.2fR sl->%.2f (%%Trig=%s, 3R=%s)",
-                        symbol_, entry, price, (R>0? move/R:0.0), targetSL,
-                        (condPercent?"yes":"no"), (cond3R?"yes":"no"));
-         }
-      }
-   }
-}
-
-// ancien : ManageOpenTrades();
-void OnTick()
-{
-   //=== Month Filter Guard ===============================================
-   {
-      MqlDateTime _dt; 
-      TimeToStruct(TimeCurrent(), _dt);
-      if(!IsTradingMonth(TimeCurrent()) && PositionsTotal()==0 && OrdersTotal()==0)
-      {
-         PrintFormat("[MonthFilter] Ouverture bloquee : %s desactive.", MonthToString(_dt.mon));
-         return;
-      }
-   }
-   //=====================================================================
-
-    ManageBreakEvenPercent(_Symbol);   // ou ManageBreakEvenPercent(sym);
-   // BE en continu (seuil %)
-    if(!IsNewBar()) return;
-    TryOpenTrade();
-}
-
-
-
-// Enregistre chaque deal dans le CSV pendant le backtest
-void OnTradeTransaction(const MqlTradeTransaction &trans,const MqlTradeRequest &request,const MqlTradeResult &result)
-{
-   if(!InpExportTradesCSV || gCSVHandle==INVALID_HANDLE)
-      return;
-   if(trans.type==TRADE_TRANSACTION_DEAL_ADD)
-   {
-      ulong deal=trans.deal;
-      if(deal>0 && HistoryDealGetInteger(deal,DEAL_ENTRY)==DEAL_ENTRY_OUT)
-      {
-         datetime t=(datetime)HistoryDealGetInteger(deal,DEAL_TIME);
-         string symbol=HistoryDealGetString(deal,DEAL_SYMBOL);
-         double volume=HistoryDealGetDouble(deal,DEAL_VOLUME);
-         long dtype=HistoryDealGetInteger(deal,DEAL_TYPE);
-         string typeStr=(dtype==DEAL_TYPE_BUY)?"BUY":"SELL";
-         ulong posId=(ulong)HistoryDealGetInteger(deal,DEAL_POSITION_ID);
-         HistorySelect(0,t);
-         double entry=HistoryPositionGetDouble(posId,POSITION_PRICE_OPEN);
-         double exit=HistoryDealGetDouble(deal,DEAL_PRICE);
-         double profit=HistoryDealGetDouble(deal,DEAL_PROFIT)
-                      +HistoryDealGetDouble(deal,DEAL_COMMISSION)
-                      +HistoryDealGetDouble(deal,DEAL_SWAP);
-         FileWrite(gCSVHandle,TimeToString(t,TIME_DATE|TIME_SECONDS),symbol,typeStr,
-                   DoubleToString(volume,2),DoubleToString(entry,_Digits),
-                   DoubleToString(exit,_Digits),DoubleToString(profit,2));
-      }
-   }
-}
-
-//======================== Events ==========================
-int OnInit()
-{
-   sym=_Symbol; dig=(int)SymbolInfoInteger(sym,SYMBOL_DIGITS); pt=SymbolInfoDouble(sym,SYMBOL_POINT);
-
-   if(InpExportTradesCSV)
-   {
-      gCSVHandle = FileOpen(InpCSVFileName, FILE_WRITE|FILE_CSV|FILE_COMMON);
-      if(gCSVHandle!=INVALID_HANDLE)
-         FileWrite(gCSVHandle, "Time","Symbol","Type","Volume","Entry","Exit","Profit");
-      else
-         Print("Impossible d'ouvrir le fichier CSV: ", GetLastError());
-   }
-
-   hEMA21=iMA(sym,InpSignalTF,21,0,MODE_EMA,PRICE_CLOSE);
-   hEMA55=iMA(sym,InpSignalTF,55,0,MODE_EMA,PRICE_CLOSE);
-   hSMAfast=iMA(sym,InpSignalTF,InpMACD_Fast,0,MODE_SMA,PRICE_CLOSE);
-   hSMAslow=iMA(sym,InpSignalTF,InpMACD_Slow,0,MODE_SMA,PRICE_CLOSE);
-   if(InpUseSMMA50Trend) hSMMA50 = iMA(sym, InpSMMA_TF, InpSMMA_Period, 0, MODE_SMMA, PRICE_CLOSE);
-   if(hEMA21==INVALID_HANDLE || hEMA55==INVALID_HANDLE || hSMAfast==INVALID_HANDLE || hSMAslow==INVALID_HANDLE || (InpUseSMMA50Trend && hSMMA50==INVALID_HANDLE)){
-      Print("Erreur: handle indicateur invalide"); return INIT_FAILED;
-   }
-   return INIT_SUCCEEDED;
-}
-
-void OnDeinit(const int reason)
-{
-   if(hEMA21!=INVALID_HANDLE) IndicatorRelease(hEMA21);
-   if(hEMA55!=INVALID_HANDLE) IndicatorRelease(hEMA55);
-   if(hSMAfast!=INVALID_HANDLE) IndicatorRelease(hSMAfast);
-   if(hSMAslow!=INVALID_HANDLE) IndicatorRelease(hSMAslow);
-   if(hSMMA50!=INVALID_HANDLE) IndicatorRelease(hSMMA50); // [ADDED]
-   if(gCSVHandle!=INVALID_HANDLE) FileClose(gCSVHandle);
-}
-
-
-
-//=== Month Filter Helpers START ==========================================
-string MonthToString(const int m)
-{
-   static string noms[12] = {"Janvier","Fevrier","Mars","Avril","Mai","Juin",
-                             "Juillet","Aout","Septembre","Octobre","Novembre","Decembre"};
-   if(m>=1 && m<=12) return noms[m-1];
-   return "Mois inconnu";
-}
-
-bool IsTradingMonth(datetime t)
-{
-   MqlDateTime dt; 
-   TimeToStruct(t, dt);
-   int m = dt.mon;
-   switch(m)
-   {
-      case 1:  return InpTrade_Janvier;
-      case 2:  return InpTrade_Fevrier;
-      case 3:  return InpTrade_Mars;
-      case 4:  return InpTrade_Avril;
-      case 5:  return InpTrade_Mai;
-      case 6:  return InpTrade_Juin;
-      case 7:  return InpTrade_Juillet;
-      case 8:  return InpTrade_Aout;
-      case 9:  return InpTrade_Septembre;
-      case 10: return InpTrade_Octobre;
-      case 11: return InpTrade_Novembre;
-      case 12: return InpTrade_Decembre;
-   }
-   return false;
-}
-//=== Month Filter Helpers END ============================================
-
-// [ADDED] Poseidon 03/09/2025 Option A — calcule la série de pertes actuelle depuis l’historique
-int CountConsecutiveLosses()
-{
-   int count = 0;
-   datetime from = 0, to = TimeCurrent();
-   if(!HistorySelect(from, to)) return gLossStreak;
-   int total = HistoryDealsTotal();
-   for(int idx=total-1; idx>=0; --idx)
-   {
-      ulong deal = HistoryDealGetTicket(idx);
-      if(deal==0) continue;
-      if(HistoryDealGetString(deal, DEAL_SYMBOL) != _Symbol) continue;
-      long dealMagic = (long)HistoryDealGetInteger(deal, DEAL_MAGIC);
-      if(InpMagic>0 && dealMagic>0 && dealMagic != (long)InpMagic) continue;
-      if((long)HistoryDealGetInteger(deal, DEAL_ENTRY) != DEAL_ENTRY_OUT) continue;
-      double profit = HistoryDealGetDouble(deal, DEAL_PROFIT)
-                    + HistoryDealGetDouble(deal, DEAL_COMMISSION)
-                    + HistoryDealGetDouble(deal, DEAL_SWAP);
-      if(profit < 0.0)      count++;
-      else if(profit > 0.0) break;
-      else                  continue;
-   }
-   return count;
-}
+                               ? entry*(1.0 + InpBE_TriggerPercent/100
