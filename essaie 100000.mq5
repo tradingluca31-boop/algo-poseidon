@@ -95,8 +95,13 @@ void ExportTradeHistory(){
    string csv_data;
    
    string file_name = StringSubstr(symbol, 0, 6) + "_" + InpFileSuffix + ".csv";
-   int file_handle = FileOpen(file_name, FILE_WRITE | FILE_CSV | FILE_ANSI, 0, CP_UTF8);
-
+    int file_handle = FileOpen(file_name, FILE_WRITE | FILE_CSV | FILE_ANSI | FILE_COMMON, 0, CP_UTF8);
+ if(file_handle == INVALID_HANDLE)
+ {
+ Print("ERROR: Failed to create CSV file: ", file_name, " Error: ", GetLastError());
+  return;
+   }
+     Print("CSV file opened successfully: ", file_name);
    if(HistorySelect(InpExportStartDate, InpExportEndDate)){
       
       csv_data = "magic,symbol,type,time_open,time_close,price_open,price_close,stop_loss,take_profit,volume,position_pnl,position_pnl_pips,swap,swap_pips,commission,commission_pips,total_pnl,total_pnl_pips,position_id,comment";
@@ -202,8 +207,20 @@ void ExportTradeHistory(){
       }
       printf("%d positions exportées vers %s", cnt, file_name);
    }
+   
+   FileFlush(file_handle);
    FileClose(file_handle);
+   Print("CSV export completed. File saved to Common folder: ", file_name);
 }
+//======================== Tester Export Handler ========================
+   void OnTesterDeinit()
+ {
+   if(InpAutoExportOnDeinit)
+ {
+  Print("Starting CSV export from Strategy Tester...");
+   ExportTradeHistory();
+   Print("CSV export completed");
+ }
 
 //======================== Utils Temps ======================
 bool IsNewBar(){ datetime ct=iTime(sym, InpSignalTF, 0); if(ct!=lastBarTime){lastBarTime=ct; return true;} return false; }
