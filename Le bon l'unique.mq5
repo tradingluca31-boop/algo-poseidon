@@ -47,8 +47,8 @@ input int    InpMaxTradesPerDay    = 2;
 
 // --- Fenêtre d'ouverture ---
 input ENUM_TIMEFRAMES InpSignalTF      = PERIOD_H1;   // TF signaux (H1)
-input int      InpSessionStartHour     = 7;           // Ouverture 7h (heure serveur)
-input int      InpSessionEndHour       = 14;          // Fermeture 14h (pas de nouvelles entrées après)
+input int      InpSessionStartHour     = 6;           // Ouverture 6h (heure serveur)
+input int      InpSessionEndHour       = 15;          // Fermeture 15h (pas de nouvelles entrées après)
 input int      InpSlippagePoints       = 20;
 input bool     InpVerboseLogs          = false;
 // [ADDED] === SMMA50 + Score conditions (optimisables) ===
