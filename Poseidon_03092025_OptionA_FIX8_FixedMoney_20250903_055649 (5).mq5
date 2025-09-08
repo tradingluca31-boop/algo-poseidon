@@ -1,520 +1,436 @@
 //+------------------------------------------------------------------+
-//|                                   Poseidon_London_1H_fixedRisk   |
-//|  H1 – Entrées 7:00-14:00 (serveur)                               |
-//|  Signal: EMA21/55 OU MACD(SMA 20,45,15)                          |
-//|  Max 2 trades/jour, SL 0.25%, TP +500$                           |
-//|  BE (0$) dès profit >= 300$ OU move >= 3R                        |
-//|  Risque FIXE = InpRiskPercent (pas de palier / pas de séries)    |
+//|                                         Poseidon_London_1H_fixedRisk.mq5 |
+//|                                                                    |
+//|                                                                    |
 //+------------------------------------------------------------------+
-#property strict
-#include <Trade/Trade.mqh>
-
-CTrade Trade;
-
-//======================== Inputs utilisateur ========================
-input long     InpMagic                = 20250811;
-input bool     InpAllowBuys            = true;
-input bool     InpAllowSells           = true;
-
-// --- Choix des signaux ---
-enum SignalMode { EMA_OR_MACD=0, EMA_ONLY=1, MACD_ONLY=2 };
-input SignalMode InpSignalMode         = EMA_OR_MACD; // "OU" par défaut
-input bool     InpUseEMA_Cross         = true;        // EMA21/55 croisement
-input bool     InpUseMACD              = true;        // MACD SMA 20/45/15
-
-// --- MACD SMA config ---
-input int      InpMACD_Fast            = 20;          // SMA rapide
-input int      InpMACD_Slow            = 45;          // SMA lente
-input int      InpMACD_Signal          = 15;          // SMA du MACD
-
-// --- Risque / gestion (en %) ---
-input double InpRiskPercent        = 1.0;   // % de la BALANCE risqué par trade
-// [ADDED] Poseidon 03/09/2025 Option A — réduction du risque après série de pertes
-input bool   UseLossStreakReduction = true;   // ON/OFF
-input int    LossStreakTrigger      = 7;      // Value=7 / Start=3 / Step=1 / Stop=15
-input double LossStreakFactor       = 0.50;   // Value=0.50 / Start=0.20 / Step=0.10 / Stop=1.00
-
-// [ADDED] Poseidon 03/09/2025 Option A — RISQUE EN MONTANT FIXE (devise du compte)
-input bool   UseFixedRiskMoney = true;   // Utiliser un montant fixe (€) au lieu du %
-input double FixedRiskMoney     = 100.0; // Montant risqué par trade (ex: 100€)
-input double ReducedRiskMoney   = 50.0;  // Montant risqué sous série de pertes (ex: 50€)
-
-input double InpSL_PercentOfPrice  = 0.25;  // SL = % du prix d'entrée (ex: 0.25 => 0.25%)
-input double InpTP_PercentOfPrice  = 1.25;  // TP = % du prix d'entrée
-input double InpBE_TriggerPercent  = 0.70;  // Passer BE quand le prix a évolué de +0.70% depuis l'entrée
-input int    InpMaxTradesPerDay    = 2;
-
-
-// --- Fenêtre d'ouverture ---
-input ENUM_TIMEFRAMES InpSignalTF      = PERIOD_H1;   // TF signaux (H1)
-input int      InpSessionStartHour     = 7;           // Ouverture 7h (heure serveur)
-input int      InpSessionEndHour       = 14;          // Fermeture 14h (pas de nouvelles entrées après)
-input int      InpSlippagePoints       = 20;
-input bool     InpVerboseLogs          = false;
-// [ADDED] === SMMA50 + Score conditions (optimisables) ===
-input bool InpUseSMMA50Trend    = true;             // Filtre tendance SMMA50
-input int  InpSMMA_Period       = 50;               // Période SMMA (Value=50 / Start=20 / Step=5 / Stop=200)
-input ENUM_TIMEFRAMES InpSMMA_TF = PERIOD_H4;       // UT SMMA (H4)
-input int  InpMinConditions     = 3;                // Conditions minimales requises (Value=3 / Start=2 / Step=1 / Stop=4)
-
-
-//=== Month Filter Inputs START ===========================================
-input bool InpTrade_Janvier   = false;  // Trader en Janvier
-input bool InpTrade_Fevrier   = false;  // Trader en Fevrier
-input bool InpTrade_Mars      = false;  // Trader en Mars
-input bool InpTrade_Avril     = true;   // Trader en Avril
-input bool InpTrade_Mai       = true;   // Trader en Mai
-input bool InpTrade_Juin      = true;   // Trader en Juin
-input bool InpTrade_Juillet   = true;   // Trader en Juillet
-input bool InpTrade_Aout      = true;   // Trader en Aout
-input bool InpTrade_Septembre = true;   // Trader en Septembre
-input bool InpTrade_Octobre   = true;   // Trader en Octobre
-input bool InpTrade_Novembre  = true;   // Trader en Novembre
-input bool InpTrade_Decembre  = true;   // Trader en Decembre
-//=== Month Filter Inputs END =============================================
-
-
-//======================== Variables ========================
-datetime lastBarTime=0;
-string   sym; int dig; double pt;
-int tradedDay=-1, tradesCountToday=0;
-int gLossStreak = 0;   // [ADDED] Compteur pertes consécutives — Poseidon 03/09/2025 Option A
-
-// Handles EMA/MAs pour MACD SMA
-int hEMA21=-1, hEMA55=-1;
-int hSMAfast=-1, hSMAslow=-1;
-
-int hSMMA50 = -1;   // [ADDED] Handle SMMA50
-//======================== Utils Temps ======================
-bool IsNewBar(){ datetime ct=iTime(sym, InpSignalTF, 0); if(ct!=lastBarTime){lastBarTime=ct; return true;} return false; }
-
-void ResetDayIfNeeded(){ MqlDateTime t; TimeToStruct(TimeCurrent(), t); if(tradedDay!=t.day_of_year){ tradedDay=t.day_of_year; tradesCountToday=0; } }
-bool CanOpenToday(){ ResetDayIfNeeded(); return tradesCountToday<InpMaxTradesPerDay; }
-void MarkTradeOpened(){ ResetDayIfNeeded(); tradesCountToday++; }
-
-bool InEntryWindow()
-{
-   MqlDateTime t; TimeToStruct(TimeCurrent(), t);
-   if(InpSessionStartHour<=InpSessionEndHour)
-      return (t.hour>=InpSessionStartHour && t.hour<InpSessionEndHour);
-   return (t.hour>=InpSessionStartHour || t.hour<InpSessionEndHour);
-}
-
-//======================== Indicateurs ======================
-bool GetEMAs(double &e21_1,double &e55_1,double &e21_2,double &e55_2)
-{
-   double b21[],b55[]; ArraySetAsSeries(b21,true); ArraySetAsSeries(b55,true);
-   if(CopyBuffer(hEMA21,0,1,2,b21)<2) return false;
-   if(CopyBuffer(hEMA55,0,1,2,b55)<2) return false;
-   e21_1=b21[0]; e21_2=b21[1]; e55_1=b55[0]; e55_2=b55[1];
-   return true;
-}
-
-// Calcule MACD SMA(20,45) et son Signal SMA(15) via SMA on-price + SMA sur MACD
-bool GetMACD_SMA(double &macd_1,double &sig_1,double &macd_2,double &sig_2)
-{
-   int need = MathMax(MathMax(InpMACD_Fast, InpMACD_Slow), InpMACD_Signal) + 5;
-   double fast[], slow[];
-   ArraySetAsSeries(fast,true); ArraySetAsSeries(slow,true);
-   if(CopyBuffer(hSMAfast,0,1,need,fast) < need) return false;
-   if(CopyBuffer(hSMAslow,0,1,need,slow) < need) return false;
-
-   double macdArr[]; ArrayResize(macdArr, need);
-   for(int i=0;i<need;i++) macdArr[i] = fast[i] - slow[i];
-
-   double sigArr[]; ArrayResize(sigArr, need);
-   int p = InpMACD_Signal;
-   double acc=0;
-   for(int i=0;i<need;i++)
-   {
-      acc += macdArr[i];
-      if(i>=p) acc -= macdArr[i-p];
-      if(i>=p-1) sigArr[i] = acc / p; else sigArr[i] = macdArr[i];
-   }
-
-   macd_1 = macdArr[0];
-   sig_1  = sigArr[0];
-   macd_2 = macdArr[1];
-   sig_2  = sigArr[1];
-   return true;
-}
-
-//------------------------ Signaux ----------------------
-void ComputeSignals(bool &buySig,bool &sellSig)
-{
-   buySig=false; sellSig=false;
-
-   bool emaBuy=false, emaSell=false;
-   if(InpUseEMA_Cross && (InpSignalMode==EMA_ONLY || InpSignalMode==EMA_OR_MACD))
-   {
-      double e21_1,e55_1,e21_2,e55_2;
-      if(GetEMAs(e21_1,e55_1,e21_2,e55_2))
-      {
-         emaBuy  = (e21_2<=e55_2 && e21_1>e55_1);
-         emaSell = (e21_2>=e55_2 && e21_1<e55_1);
-      }
-   }
-
-   bool macdBuy=false, macdSell=false;
-   if(InpUseMACD && (InpSignalMode==MACD_ONLY || InpSignalMode==EMA_OR_MACD))
-   {
-      double m1,s1,m2,s2;
-      if(GetMACD_SMA(m1,s1,m2,s2))
-      {
-         macdBuy  = (m2<=s2 && m1>s1);   // croisement haussier
-         macdSell = (m2>=s2 && m1<s1);   // croisement baissier
-      }
-   }
-
-   if(InpSignalMode==EMA_ONLY)      { buySig=emaBuy;  sellSig=emaSell; }
-   else if(InpSignalMode==MACD_ONLY){ buySig=macdBuy; sellSig=macdSell; }
-   else /* EMA_OR_MACD */           {
-      buySig  = (emaBuy  || macdBuy);
-      sellSig = (emaSell || macdSell);
-   }
-}
-// [ADDED] ---- Helpers SMMA/EMA/MACD pour scoring 4 conditions ----
-
-bool GetSMMA50(double &out_smma)
-{
-   if(!InpUseSMMA50Trend) return false;
-   if(hSMMA50==INVALID_HANDLE) return false;
-   double b[]; ArraySetAsSeries(b,true);
-   if(CopyBuffer(hSMMA50,0,0,1,b)<1) return false;
-   out_smma = b[0];
-   return true;
-}
-
-// +1 (buy) / -1 (sell) / 0 neutre
-int TrendDir_SMMA50()
-{
-   if(!InpUseSMMA50Trend) return 0;
-   double smma=0.0; if(!GetSMMA50(smma)) return 0;
-   double bid=SymbolInfoDouble(sym,SYMBOL_BID), ask=SymbolInfoDouble(sym,SYMBOL_ASK);
-   double px=(bid+ask)*0.5;
-   if(px>smma) return +1;
-   if(px<smma) return -1;
-   return 0;
-}
-
-// EMA21/55 (croisement)
-bool GetEMACrossSignal(bool &buy,bool &sell)
-{
-   buy=false; sell=false;
-   double e21_1,e55_1,e21_2,e55_2;
-   if(!GetEMAs(e21_1,e55_1,e21_2,e55_2)) return false;
-   buy  = (e21_2<=e55_2 && e21_1>e55_1);
-   sell = (e21_2>=e55_2 && e21_1<e55_1);
-   return true;
-}
-
-// MACD (SMA-based existant) — croisement des lignes
-bool GetMACD_CrossSignal(bool &buy,bool &sell)
-{
-   buy=false; sell=false;
-   double m1,s1,m2,s2;
-   if(!GetMACD_SMA(m1,s1,m2,s2)) return false;
-   buy  = (m2<=s2 && m1>s1);
-   sell = (m2>=s2 && m1<s1);
-   return true;
-}
-
-// MACD — histogramme (MAIN - SIGNAL)
-bool GetMACD_HistSignal(bool &buy,bool &sell)
-{
-   buy=false; sell=false;
-   double m1,s1,m2,s2;
-   if(!GetMACD_SMA(m1,s1,m2,s2)) return false;
-   double hist = (m1 - s1);
-   buy  = (hist > 0.0);
-   sell = (hist < 0.0);
-   return true;
-}
-
-
-//======================== Prix/SL/TP ========================
-void MakeSL_Init(int dir,double entry,double &sl)
-{
-   double p=InpSL_PercentOfPrice/100.0;
-   if(dir>0) sl=entry*(1.0-p); else sl=entry*(1.0+p);
-   sl=NormalizeDouble(sl,dig);
-}
-
-bool PriceForTargetProfit(int dir,double lots,double entry,double targetUSD,double &priceOut)
-{
-   // Recherche binaire +/- 3% autour de l'entrée
-   double range = entry*0.03;
-   double lo = (dir>0? entry : entry-range), hi=(dir>0? entry+range : entry);
-   for(int i=0;i<50;i++){
-      double mid=(lo+hi)*0.5;
-      double pf=0.0; bool ok = (dir>0)? OrderCalcProfit(ORDER_TYPE_BUY,sym,lots,entry,mid,pf)
-                                      : OrderCalcProfit(ORDER_TYPE_SELL,sym,lots,entry,mid,pf);
-      if(!ok) return false;
-      if(pf<targetUSD){ if(dir>0) lo=mid; else hi=mid; }
-      else             { if(dir>0) hi=mid; else lo=mid; }
-   }
-   priceOut=NormalizeDouble((lo+hi)*0.5,dig);
-   return true;
-}
-
-//======================== Sizing 1% FIXE ===================
-double LossPerLotAtSL(int dir,double entry,double sl)
-{
-   double p=0.0; bool ok = (dir>0)? OrderCalcProfit(ORDER_TYPE_BUY,sym,1.0,entry,sl,p)
-                                  : OrderCalcProfit(ORDER_TYPE_SELL,sym,1.0,entry,sl,p);
-   if(ok) return MathAbs(p);
-   double tv=SymbolInfoDouble(sym,SYMBOL_TRADE_TICK_VALUE);
-   double ts=SymbolInfoDouble(sym,SYMBOL_TRADE_TICK_SIZE);
-   double dist=MathAbs(entry-sl);
-   if(tv>0 && ts>0) return (dist/ts)*tv;
-   return 0.0;
-}
-
-double LotsFromRisk(int dir,double entry,double sl)
-{
-   double equity=AccountInfoDouble(ACCOUNT_EQUITY);
-// [CHANGED] Poseidon 03/09/2025 Option A — risque en € fixe + réduction série
-double riskMoney = equity*(InpRiskPercent/100.0); // fallback %
-if(UseFixedRiskMoney)
-   riskMoney = FixedRiskMoney;
-
-if(UseLossStreakReduction)
-{
-   gLossStreak = CountConsecutiveLosses();
-   if(gLossStreak >= LossStreakTrigger)
-   {
-      if(UseFixedRiskMoney) riskMoney = ReducedRiskMoney;
-      else                  riskMoney *= LossStreakFactor;
-   }
-   if(InpVerboseLogs) PrintFormat("[LossStreak] count=%d, riskMoney=%.2f", gLossStreak, riskMoney);
-}
-
-double risk=riskMoney;
-   double lossPerLot=LossPerLotAtSL(dir,entry,sl);
-   if(lossPerLot<=0) return 0.0;
-   double lots=risk/lossPerLot;
-   double step=SymbolInfoDouble(sym,SYMBOL_VOLUME_STEP);
-   double minL=SymbolInfoDouble(sym,SYMBOL_VOLUME_MIN);
-   double maxL=SymbolInfoDouble(sym,SYMBOL_VOLUME_MAX);
-   if(step<=0) step=0.01;
-   lots=MathFloor(lots/step)*step;
-   lots=MathMax(minL,MathMin(lots,maxL));
-   if(InpVerboseLogs) PrintFormat("[Sizing FIX] equity=%.2f risk$=%.2f entry=%.2f sl=%.2f lossPerLot=%.2f lots=%.2f",
-                                  equity, risk, entry, sl, lossPerLot, lots);
-   return lots;
-}
-
-//======================== Ouverture ========================
-void TryOpenTrade()
-{
-   if(!InEntryWindow()) return;
-   if(!CanOpenToday()) return;
-
-   // [CHANGED] Scoring 4 conditions (SMMA + EMA + MACD_hist + MACD_cross) + filtre SMMA directionnel
-int scoreBuy=0, scoreSell=0;
-
-// 1) SMMA50 H4 tendance
-int tdir = TrendDir_SMMA50(); // +1/-1/0
-if(InpUseSMMA50Trend){
-   if(tdir>0) scoreBuy++;
-   else if(tdir<0) scoreSell++;
-   else return; // neutre -> pas d'entrée
-}
-
-// 2) EMA21/55 cross
-bool emaB=false, emaS=false; GetEMACrossSignal(emaB, emaS);
-if(emaB) scoreBuy++; if(emaS) scoreSell++;
-
-// 3) MACD histogramme
-bool mhB=false, mhS=false; GetMACD_HistSignal(mhB, mhS);
-if(mhB) scoreBuy++; if(mhS) scoreSell++;
-
-// 4) MACD croisement lignes
-bool mcB=false, mcS=false; GetMACD_CrossSignal(mcB, mcS);
-if(mcB) scoreBuy++; if(mcS) scoreSell++;
-
-bool allowBuy  = (!InpUseSMMA50Trend || tdir>0);
-bool allowSell = (!InpUseSMMA50Trend || tdir<0);
-
-int dir=0;
-if(scoreBuy  >= InpMinConditions && allowBuy  && InpAllowBuys)  dir=+1;
-if(scoreSell >= InpMinConditions && allowSell && InpAllowSells && dir==0) dir=-1;
-if(dir==0) return;
-
-   double entry=(dir>0)? SymbolInfoDouble(sym,SYMBOL_ASK):SymbolInfoDouble(sym,SYMBOL_BID);
-   double sl; MakeSL_Init(dir,entry,sl);
-   double lots=LotsFromRisk(dir,entry,sl);
-   if(lots<=0) return;
-
-   // TP en % du prix d'entrée
-double tpPrice = (dir>0 ? entry*(1.0 + InpTP_PercentOfPrice/100.0)
-                        : entry*(1.0 - InpTP_PercentOfPrice/100.0));
-
-
-
-   Trade.SetExpertMagicNumber(InpMagic);
-   Trade.SetDeviationInPoints(InpSlippagePoints);
-   string cmt="BASE";
-   if(UseLossStreakReduction && gLossStreak >= LossStreakTrigger) cmt="RISK-REDUCED";   // [ADDED]
-   bool ok=(dir>0)? Trade.Buy(lots,sym,entry,sl,tpPrice,cmt)
-                  : Trade.Sell(lots,sym,entry,sl,tpPrice,cmt);
-   if(ok) MarkTradeOpened();
-}
-
-//======================== Gestion BE =======================
-double RPrice(const double entry){ return entry*(InpSL_PercentOfPrice/100.0); } // 1R = SL% d'entrée
-
-void ManageBreakEvenPercent(const string symbol_)   // nom changé pour ne pas masquer une globale
-{
-   for(int i=PositionsTotal()-1; i>=0; --i)
-   {
-      ulong ticket = PositionGetTicket(i);
-      if(ticket==0 || !PositionSelectByTicket(ticket)) continue;         // sélection
-      if(PositionGetString(POSITION_SYMBOL)!=symbol_) continue;          // filtre symbole
-
-      long   type  = (long)PositionGetInteger(POSITION_TYPE);            // BUY/SELL
-      double entry = PositionGetDouble (POSITION_PRICE_OPEN);
-      double sl    = PositionGetDouble (POSITION_SL);
-      double tp    = PositionGetDouble (POSITION_TP);
-      double price = (type==POSITION_TYPE_BUY)
-                     ? SymbolInfoDouble(symbol_, SYMBOL_BID)
-                     : SymbolInfoDouble(symbol_, SYMBOL_ASK);
-
-      // Seuil BE : +0.70% depuis l'entrée OU 3R
-      const double beTrigger = (type==POSITION_TYPE_BUY)
-                               ? entry*(1.0 + InpBE_TriggerPercent/100.0)
-                               : entry*(1.0 - InpBE_TriggerPercent/100.0);
-      const bool condPercent = (type==POSITION_TYPE_BUY) ? (price>=beTrigger) : (price<=beTrigger);
-
-      const double R    = MathAbs(entry - sl);              // 1R en prix
-      const double move = MathAbs(price - entry);
-      const bool   cond3R = (R>0.0 && move >= 3.0*R);
-
-      if(condPercent || cond3R)
-      {
-         const int    d       = (int)SymbolInfoInteger(symbol_, SYMBOL_DIGITS);
-         const double ptLocal = SymbolInfoDouble(symbol_, SYMBOL_POINT);  // <— nom différent
-
-         double targetSL = NormalizeDouble(entry, d);       // BE = SL à l’entrée
-         bool need = (type==POSITION_TYPE_BUY)  ? (sl < targetSL - 10*ptLocal)
-                                                : (sl > targetSL + 10*ptLocal);
-
-         if(need){
-            Trade.PositionModify(symbol_, targetSL, tp);
-            // log utile
-            PrintFormat("[BE] %s entry=%.2f price=%.2f move=%.2fR sl->%.2f (%%Trig=%s, 3R=%s)",
-                        symbol_, entry, price, (R>0? move/R:0.0), targetSL,
-                        (condPercent?"yes":"no"), (cond3R?"yes":"no"));
-         }
-      }
-   }
-}
-
-// ancien : ManageOpenTrades();
-void OnTick()
-{
-   //=== Month Filter Guard ===============================================
-   {
-      MqlDateTime _dt; 
-      TimeToStruct(TimeCurrent(), _dt);
-      if(!IsTradingMonth(TimeCurrent()) && PositionsTotal()==0 && OrdersTotal()==0)
-      {
-         PrintFormat("[MonthFilter] Ouverture bloquee : %s desactive.", MonthToString(_dt.mon));
-         return;
-      }
-   }
-   //=====================================================================
-
-    ManageBreakEvenPercent(_Symbol);   // ou ManageBreakEvenPercent(sym);
-   // BE en continu (seuil %)
-    if(!IsNewBar()) return;
-    TryOpenTrade();
-}
-
-
-
-
-//======================== Events ==========================
+#property copyright "Copyright 2025, MetaQuotes Software Corp."
+#property link      "https://www.mql5.com"
+#property version   "1.00"
+
+//--- Input parameters
+input group "=== Signal Parameters ==="
+input ENUM_TIMEFRAMES Timeframe = PERIOD_H1;                    // Timeframe for analysis
+input int             EMA_fast = 21;                            // Fast EMA period
+input int             EMA_slow = 55;                            // Slow EMA period
+input int             MACD_fast = 12;                           // MACD fast period
+input int             MACD_slow = 26;                           // MACD slow period
+input int             MACD_signal = 9;                          // MACD signal period
+
+input group "=== Risk Management ==="
+input bool            UseFixedRisk = true;                      // Use fixed risk percentage
+input double          FixedRisk = 1.0;                          // Fixed risk percentage
+input double          FixedMoney = 100.0;                       // Fixed money risk (if UseFixedRisk=false)
+input bool            UseStreakRiskReduction = true;            // Use loss streak risk reduction
+input int             StreakLength = 3;                         // Loss streak length for risk reduction
+input double          StreakRiskReduction = 0.5;               // Risk reduction factor for streak
+
+input group "=== Trading Hours ==="
+input int             StartHour = 6;                            // Trading start hour (server time)
+input int             EndHour = 15;                             // Trading end hour (server time)
+
+input group "=== Position Management ==="
+input int             MaxTradesPerDay = 2;                     // Maximum trades per day
+input bool            UseBE = true;                             // Use break-even
+input double          BEPoints = 100.0;                        // Break-even points
+
+input group "=== Month Filter ==="
+input bool            UseMonthFilter = false;                  // Use month filter
+input bool            TradeJanuary = true;                     // Trade in January
+input bool            TradeFebruary = true;                    // Trade in February
+input bool            TradeMarch = true;                       // Trade in March
+input bool            TradeApril = true;                       // Trade in April
+input bool            TradeMay = true;                         // Trade in May
+input bool            TradeJune = true;                        // Trade in June
+input bool            TradeJuly = true;                        // Trade in July
+input bool            TradeAugust = true;                      // Trade in August
+input bool            TradeSeptember = true;                   // Trade in September
+input bool            TradeOctober = true;                     // Trade in October
+input bool            TradeNovember = true;                    // Trade in November
+input bool            TradeDecember = true;                    // Trade in December
+
+//--- Global variables
+double signal_score = 0;
+int trades_today = 0;
+int loss_streak = 0;
+datetime last_trade_date = 0;
+
+//--- Handles for indicators
+int handle_ema_fast, handle_ema_slow, handle_macd;
+
+//+------------------------------------------------------------------+
+//| Expert initialization function                                   |
+//+------------------------------------------------------------------+
 int OnInit()
 {
-   sym=_Symbol; dig=(int)SymbolInfoInteger(sym,SYMBOL_DIGITS); pt=SymbolInfoDouble(sym,SYMBOL_POINT);
-
-   hEMA21=iMA(sym,InpSignalTF,21,0,MODE_EMA,PRICE_CLOSE);
-   hEMA55=iMA(sym,InpSignalTF,55,0,MODE_EMA,PRICE_CLOSE);
-   hSMAfast=iMA(sym,InpSignalTF,InpMACD_Fast,0,MODE_SMA,PRICE_CLOSE);
-   hSMAslow=iMA(sym,InpSignalTF,InpMACD_Slow,0,MODE_SMA,PRICE_CLOSE);
-   if(InpUseSMMA50Trend) hSMMA50 = iMA(sym, InpSMMA_TF, InpSMMA_Period, 0, MODE_SMMA, PRICE_CLOSE);
-   if(hEMA21==INVALID_HANDLE || hEMA55==INVALID_HANDLE || hSMAfast==INVALID_HANDLE || hSMAslow==INVALID_HANDLE || (InpUseSMMA50Trend && hSMMA50==INVALID_HANDLE)){
-      Print("Erreur: handle indicateur invalide"); return INIT_FAILED;
-   }
-   return INIT_SUCCEEDED;
+    //--- Initialize indicators
+    handle_ema_fast = iMA(_Symbol, Timeframe, EMA_fast, 0, MODE_EMA, PRICE_CLOSE);
+    handle_ema_slow = iMA(_Symbol, Timeframe, EMA_slow, 0, MODE_EMA, PRICE_CLOSE);
+    handle_macd = iMACD(_Symbol, Timeframe, MACD_fast, MACD_slow, MACD_signal, PRICE_CLOSE);
+    
+    if(handle_ema_fast == INVALID_HANDLE || handle_ema_slow == INVALID_HANDLE || handle_macd == INVALID_HANDLE)
+    {
+        Print("Error creating indicators");
+        return(INIT_FAILED);
+    }
+    
+    Print("Poseidon EA initialized successfully");
+    return(INIT_SUCCEEDED);
 }
 
+//+------------------------------------------------------------------+
+//| Expert deinitialization function                                 |
+//+------------------------------------------------------------------+
 void OnDeinit(const int reason)
 {
-   if(hEMA21!=INVALID_HANDLE) IndicatorRelease(hEMA21);
-   if(hEMA55!=INVALID_HANDLE) IndicatorRelease(hEMA55);
-   if(hSMAfast!=INVALID_HANDLE) IndicatorRelease(hSMAfast);
-   if(hSMAslow!=INVALID_HANDLE) IndicatorRelease(hSMAslow);
-   if(hSMMA50!=INVALID_HANDLE) IndicatorRelease(hSMMA50); // [ADDED]
+    //--- Release indicator handles
+    if(handle_ema_fast != INVALID_HANDLE) IndicatorRelease(handle_ema_fast);
+    if(handle_ema_slow != INVALID_HANDLE) IndicatorRelease(handle_ema_slow);
+    if(handle_macd != INVALID_HANDLE) IndicatorRelease(handle_macd);
 }
 
-
-
-//=== Month Filter Helpers START ==========================================
-string MonthToString(const int m)
+//+------------------------------------------------------------------+
+//| Expert tick function                                             |
+//+------------------------------------------------------------------+
+void OnTick()
 {
-   static string noms[12] = {"Janvier","Fevrier","Mars","Avril","Mai","Juin",
-                             "Juillet","Aout","Septembre","Octobre","Novembre","Decembre"};
-   if(m>=1 && m<=12) return noms[m-1];
-   return "Mois inconnu";
+    //--- Check if it's a new bar
+    static datetime last_bar_time = 0;
+    datetime current_bar_time = iTime(_Symbol, Timeframe, 0);
+    
+    if(current_bar_time == last_bar_time)
+        return;
+    
+    last_bar_time = current_bar_time;
+    
+    //--- Check trading conditions
+    if(!IsTimeToTrade()) return;
+    if(!IsMonthAllowed()) return;
+    if(trades_today >= MaxTradesPerDay) return;
+    
+    //--- Update daily trades counter
+    UpdateDailyTrades();
+    
+    //--- Get signals
+    signal_score = GetSignalScore();
+    
+    //--- Execute trades based on signal
+    if(signal_score > 0 && !HasOpenPosition(ORDER_TYPE_BUY))
+    {
+        OpenPosition(ORDER_TYPE_BUY);
+    }
+    else if(signal_score < 0 && !HasOpenPosition(ORDER_TYPE_SELL))
+    {
+        OpenPosition(ORDER_TYPE_SELL);
+    }
+    
+    //--- Manage existing positions
+    ManagePositions();
 }
 
-bool IsTradingMonth(datetime t)
+//+------------------------------------------------------------------+
+//| Check if current time is within trading hours                    |
+//+------------------------------------------------------------------+
+bool IsTimeToTrade()
 {
-   MqlDateTime dt; 
-   TimeToStruct(t, dt);
-   int m = dt.mon;
-   switch(m)
-   {
-      case 1:  return InpTrade_Janvier;
-      case 2:  return InpTrade_Fevrier;
-      case 3:  return InpTrade_Mars;
-      case 4:  return InpTrade_Avril;
-      case 5:  return InpTrade_Mai;
-      case 6:  return InpTrade_Juin;
-      case 7:  return InpTrade_Juillet;
-      case 8:  return InpTrade_Aout;
-      case 9:  return InpTrade_Septembre;
-      case 10: return InpTrade_Octobre;
-      case 11: return InpTrade_Novembre;
-      case 12: return InpTrade_Decembre;
-   }
-   return false;
+    MqlDateTime dt;
+    TimeToStruct(TimeCurrent(), dt);
+    
+    int current_hour = dt.hour;
+    
+    return (current_hour >= StartHour && current_hour < EndHour);
 }
-//=== Month Filter Helpers END ============================================
 
-// [ADDED] Poseidon 03/09/2025 Option A — calcule la série de pertes actuelle depuis l’historique
-int CountConsecutiveLosses()
+//+------------------------------------------------------------------+
+//| Check if current month is allowed for trading                    |
+//+------------------------------------------------------------------+
+bool IsMonthAllowed()
 {
-   int count = 0;
-   datetime from = 0, to = TimeCurrent();
-   if(!HistorySelect(from, to)) return gLossStreak;
-   int total = HistoryDealsTotal();
-   for(int idx=total-1; idx>=0; --idx)
-   {
-      ulong deal = HistoryDealGetTicket(idx);
-      if(deal==0) continue;
-      if(HistoryDealGetString(deal, DEAL_SYMBOL) != _Symbol) continue;
-      long dealMagic = (long)HistoryDealGetInteger(deal, DEAL_MAGIC);
-      if(InpMagic>0 && dealMagic>0 && dealMagic != (long)InpMagic) continue;
-      if((long)HistoryDealGetInteger(deal, DEAL_ENTRY) != DEAL_ENTRY_OUT) continue;
-      double profit = HistoryDealGetDouble(deal, DEAL_PROFIT)
-                    + HistoryDealGetDouble(deal, DEAL_COMMISSION)
-                    + HistoryDealGetDouble(deal, DEAL_SWAP);
-      if(profit < 0.0)      count++;
-      else if(profit > 0.0) break;
-      else                  continue;
-   }
-   return count;
+    if(!UseMonthFilter) return true;
+    
+    MqlDateTime dt;
+    TimeToStruct(TimeCurrent(), dt);
+    
+    switch(dt.mon)
+    {
+        case 1: return TradeJanuary;
+        case 2: return TradeFebruary;
+        case 3: return TradeMarch;
+        case 4: return TradeApril;
+        case 5: return TradeMay;
+        case 6: return TradeJune;
+        case 7: return TradeJuly;
+        case 8: return TradeAugust;
+        case 9: return TradeSeptember;
+        case 10: return TradeOctober;
+        case 11: return TradeNovember;
+        case 12: return TradeDecember;
+        default: return false;
+    }
+}
+
+//+------------------------------------------------------------------+
+//| Update daily trades counter                                       |
+//+------------------------------------------------------------------+
+void UpdateDailyTrades()
+{
+    MqlDateTime dt;
+    TimeToStruct(TimeCurrent(), dt);
+    datetime today = StructToTime(dt);
+    dt.hour = 0;
+    dt.min = 0;
+    dt.sec = 0;
+    today = StructToTime(dt);
+    
+    if(last_trade_date != today)
+    {
+        trades_today = 0;
+        last_trade_date = today;
+    }
+}
+
+//+------------------------------------------------------------------+
+//| Get signal score based on multiple conditions                    |
+//+------------------------------------------------------------------+
+double GetSignalScore()
+{
+    double score = 0;
+    
+    //--- Get indicator values
+    double ema_fast[], ema_slow[], macd_main[], macd_signal[];
+    
+    ArraySetAsSeries(ema_fast, true);
+    ArraySetAsSeries(ema_slow, true);
+    ArraySetAsSeries(macd_main, true);
+    ArraySetAsSeries(macd_signal, true);
+    
+    if(CopyBuffer(handle_ema_fast, 0, 0, 3, ema_fast) < 3 ||
+       CopyBuffer(handle_ema_slow, 0, 0, 3, ema_slow) < 3 ||
+       CopyBuffer(handle_macd, 0, 0, 3, macd_main) < 3 ||
+       CopyBuffer(handle_macd, 1, 0, 3, macd_signal) < 3)
+    {
+        return 0;
+    }
+    
+    //--- EMA crossover signals
+    if(ema_fast[1] > ema_slow[1] && ema_fast[2] <= ema_slow[2])
+        score += 1; // Bullish EMA cross
+    else if(ema_fast[1] < ema_slow[1] && ema_fast[2] >= ema_slow[2])
+        score -= 1; // Bearish EMA cross
+    
+    //--- MACD signals
+    if(macd_main[1] > macd_signal[1] && macd_main[2] <= macd_signal[2])
+        score += 1; // Bullish MACD cross
+    else if(macd_main[1] < macd_signal[1] && macd_main[2] >= macd_signal[2])
+        score -= 1; // Bearish MACD cross
+    
+    //--- Price position relative to EMAs
+    double close_price = iClose(_Symbol, Timeframe, 1);
+    if(close_price > ema_fast[1] && close_price > ema_slow[1])
+        score += 0.5; // Price above both EMAs
+    else if(close_price < ema_fast[1] && close_price < ema_slow[1])
+        score -= 0.5; // Price below both EMAs
+    
+    //--- MACD histogram direction
+    if(macd_main[1] > 0 && macd_main[1] > macd_main[2])
+        score += 0.5; // Positive and increasing MACD
+    else if(macd_main[1] < 0 && macd_main[1] < macd_main[2])
+        score -= 0.5; // Negative and decreasing MACD
+    
+    return score;
+}
+
+//+------------------------------------------------------------------+
+//| Check if there's an open position of the specified type          |
+//+------------------------------------------------------------------+
+bool HasOpenPosition(ENUM_ORDER_TYPE order_type)
+{
+    for(int i = 0; i < PositionsTotal(); i++)
+    {
+        if(PositionGetSymbol(i) == _Symbol)
+        {
+            ENUM_POSITION_TYPE pos_type = (ENUM_POSITION_TYPE)PositionGetInteger(POSITION_TYPE);
+            if((order_type == ORDER_TYPE_BUY && pos_type == POSITION_TYPE_BUY) ||
+               (order_type == ORDER_TYPE_SELL && pos_type == POSITION_TYPE_SELL))
+            {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
+//+------------------------------------------------------------------+
+//| Open a new position                                              |
+//+------------------------------------------------------------------+
+void OpenPosition(ENUM_ORDER_TYPE order_type)
+{
+    double lot_size = CalculateLotSize();
+    if(lot_size <= 0) return;
+    
+    MqlTradeRequest request = {};
+    MqlTradeResult result = {};
+    
+    double price = (order_type == ORDER_TYPE_BUY) ? SymbolInfoDouble(_Symbol, SYMBOL_ASK) : SymbolInfoDouble(_Symbol, SYMBOL_BID);
+    
+    request.action = TRADE_ACTION_DEAL;
+    request.symbol = _Symbol;
+    request.volume = lot_size;
+    request.type = order_type;
+    request.price = price;
+    request.deviation = 10;
+    request.magic = 12345;
+    request.comment = "Poseidon EA";
+    
+    if(OrderSend(request, result))
+    {
+        Print("Position opened: ", EnumToString(order_type), " Volume: ", lot_size);
+        trades_today++;
+    }
+    else
+    {
+        Print("Error opening position: ", result.retcode);
+    }
+}
+
+//+------------------------------------------------------------------+
+//| Calculate lot size based on risk management                      |
+//+------------------------------------------------------------------+
+double CalculateLotSize()
+{
+    double lot_size = 0;
+    double account_balance = AccountInfoDouble(ACCOUNT_BALANCE);
+    double min_lot = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MIN);
+    double max_lot = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MAX);
+    double lot_step = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_STEP);
+    
+    if(UseFixedRisk)
+    {
+        double risk_amount = account_balance * FixedRisk / 100.0;
+        
+        // Adjust for loss streak
+        if(UseStreakRiskReduction && loss_streak >= StreakLength)
+        {
+            risk_amount *= StreakRiskReduction;
+        }
+        
+        // Calculate lot size based on risk (simplified calculation)
+        double pip_value = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_TICK_VALUE);
+        double stop_loss_pips = 100; // Default stop loss in pips
+        
+        if(pip_value > 0 && stop_loss_pips > 0)
+        {
+            lot_size = risk_amount / (stop_loss_pips * pip_value);
+        }
+    }
+    else
+    {
+        double risk_amount = FixedMoney;
+        
+        // Adjust for loss streak
+        if(UseStreakRiskReduction && loss_streak >= StreakLength)
+        {
+            risk_amount *= StreakRiskReduction;
+        }
+        
+        // Calculate lot size based on fixed money risk
+        double pip_value = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_TICK_VALUE);
+        double stop_loss_pips = 100; // Default stop loss in pips
+        
+        if(pip_value > 0 && stop_loss_pips > 0)
+        {
+            lot_size = risk_amount / (stop_loss_pips * pip_value);
+        }
+    }
+    
+    // Normalize lot size
+    lot_size = MathFloor(lot_size / lot_step) * lot_step;
+    lot_size = MathMax(min_lot, MathMin(max_lot, lot_size));
+    
+    return lot_size;
+}
+
+//+------------------------------------------------------------------+
+//| Manage existing positions                                         |
+//+------------------------------------------------------------------+
+void ManagePositions()
+{
+    for(int i = PositionsTotal() - 1; i >= 0; i--)
+    {
+        if(PositionGetSymbol(i) == _Symbol)
+        {
+            ulong ticket = PositionGetInteger(POSITION_TICKET);
+            double open_price = PositionGetDouble(POSITION_PRICE_OPEN);
+            double current_price = (PositionGetInteger(POSITION_TYPE) == POSITION_TYPE_BUY) ? 
+                                   SymbolInfoDouble(_Symbol, SYMBOL_BID) : SymbolInfoDouble(_Symbol, SYMBOL_ASK);
+            double profit_points = 0;
+            
+            if(PositionGetInteger(POSITION_TYPE) == POSITION_TYPE_BUY)
+            {
+                profit_points = (current_price - open_price) / _Point;
+            }
+            else
+            {
+                profit_points = (open_price - current_price) / _Point;
+            }
+            
+            // Break-even management
+            if(UseBE && profit_points >= BEPoints)
+            {
+                double sl = PositionGetDouble(POSITION_SL);
+                if((PositionGetInteger(POSITION_TYPE) == POSITION_TYPE_BUY && sl < open_price) ||
+                   (PositionGetInteger(POSITION_TYPE) == POSITION_TYPE_SELL && sl > open_price) || sl == 0)
+                {
+                    MoveToBreakEven(ticket, open_price);
+                }
+            }
+        }
+    }
+}
+
+//+------------------------------------------------------------------+
+//| Move stop loss to break-even                                     |
+//+------------------------------------------------------------------+
+void MoveToBreakEven(ulong ticket, double open_price)
+{
+    MqlTradeRequest request = {};
+    MqlTradeResult result = {};
+    
+    request.action = TRADE_ACTION_SLTP;
+    request.position = ticket;
+    request.sl = open_price;
+    request.tp = PositionGetDouble(POSITION_TP);
+    
+    if(OrderSend(request, result))
+    {
+        Print("Position moved to break-even: ", ticket);
+    }
+}
+
+//+------------------------------------------------------------------+
+//| Handle trade events                                               |
+//+------------------------------------------------------------------+
+void OnTrade()
+{
+    // Update loss streak counter
+    HistorySelect(TimeCurrent() - 86400, TimeCurrent()); // Last 24 hours
+    
+    int consecutive_losses = 0;
+    for(int i = HistoryDealsTotal() - 1; i >= 0; i--)
+    {
+        ulong ticket = HistoryDealGetTicket(i);
+        if(HistoryDealGetString(ticket, DEAL_SYMBOL) == _Symbol)
+        {
+            double profit = HistoryDealGetDouble(ticket, DEAL_PROFIT);
+            if(profit < 0)
+            {
+                consecutive_losses++;
+            }
+            else if(profit > 0)
+            {
+                break;
+            }
+        }
+    }
+    
+    loss_streak = consecutive_losses;
 }
