@@ -416,11 +416,14 @@ void ManageBreakEvenPercent(const string symbol_)   // nom changé pour ne pas m
          const int    d       = (int)SymbolInfoInteger(symbol_, SYMBOL_DIGITS);
          const double ptLocal = SymbolInfoDouble(symbol_, SYMBOL_POINT);  // <— nom différent
 
-         double targetSL = NormalizeDouble(entry, d);       // BE = SL à l'entrée
-         bool need = (type==POSITION_TYPE_BUY)  ? (sl < targetSL - 10*ptLocal)
-                                                : (sl > targetSL + 10*ptLocal);
+        double targetSL = NormalizeDouble(entry, d);       // BE = SL à l'entrée
+        bool need = false;
+        if(type==POSITION_TYPE_BUY)
+           need = (sl < targetSL - 10*ptLocal);
+        else
+           need = (sl > targetSL + 10*ptLocal);
 
-         if(need){
+        if(need){
             Trade.PositionModify(symbol_, targetSL, tp);
             // log utile
             PrintFormat("[BE] %s entry=%.2f price=%.2f move=%.2fR sl->%.2f (%%Trig=%s, 3R=%s)",
@@ -614,7 +617,20 @@ string MonthToString(int month)
 void ExportBacktestToCSV()
 {
    string symbol = _Symbol;
-   string file_name = symbol + "_" + InpCSV_Suffix + ".csv";
+
+   // Crée le dossier de sortie dans "Common" si nécessaire
+   string folder = "Testes\\2014";
+   if(!DirectoryCreate(folder, FILE_COMMON))
+   {
+      Print("Erreur DirectoryCreate : ", GetLastError());
+      return;
+   }
+
+   // Construit le nom de fichier complet et affiche le chemin résolu
+   string file_name = folder + "\\" + symbol + "_" + InpCSV_Suffix + ".csv";
+   string full_path = TerminalInfoString(TERMINAL_COMMONDATA_PATH) + "\\Files\\" + file_name;
+   Print("Export du fichier CSV vers : ", full_path);
+
    int file_handle = FileOpen(file_name, FILE_WRITE | FILE_CSV | FILE_ANSI | FILE_COMMON, 0, CP_UTF8);
    if(file_handle==INVALID_HANDLE)
    {
@@ -710,7 +726,7 @@ void ExportBacktestToCSV()
       }
    }
    FileClose(file_handle);
-   Print("Backtest trades exported to ", file_name);
+   Print("Backtest trades exported to ", full_path);
 }
 //+------------------------------------------------------------------+
 void OnTesterDeinit()
