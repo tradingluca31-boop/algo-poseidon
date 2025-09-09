@@ -81,6 +81,11 @@ input bool InpTrade_Novembre  = true;   // Trader en Novembre
 input bool InpTrade_Decembre  = true;   // Trader en Decembre
 //=== Month Filter Inputs END =============================================
 
+// --- Export backtest results ---
+input string   InpCSV_Suffix     = "Backtest";             // Suffix for CSV export file
+input datetime InpCSV_StartDate  = D'2000.01.01';          // Export start date
+input datetime InpCSV_EndDate    = D'2099.12.31';          // Export end date
+
 
 //======================== Variables ========================
 datetime lastBarTime=0;
@@ -601,4 +606,114 @@ string MonthToString(int month)
       case 12: return "Decembre";
       default: return "Inconnu";
    }
+}
+
+//+------------------------------------------------------------------+
+//| Export backtest trades to CSV                                   |
+//+------------------------------------------------------------------+
+void ExportBacktestToCSV()
+{
+   string symbol = _Symbol;
+   string file_name = symbol + "_" + InpCSV_Suffix + ".csv";
+   int file_handle = FileOpen(file_name, FILE_WRITE | FILE_CSV | FILE_ANSI | FILE_COMMON, 0, CP_UTF8);
+   if(file_handle==INVALID_HANDLE)
+   {
+      Print("File open failed: ",GetLastError());
+      return;
+   }
+   if(HistorySelect(InpCSV_StartDate, InpCSV_EndDate))
+   {
+      string header = "magic,symbol,type,time_open,time_close,price_open,price_close,stop_loss,take_profit,volume,position_pnl,position_pnl_pips,swap,swap_pips,commission,commission_pips,total_pnl,total_pnl_pips,position_id,comment";
+      FileWrite(file_handle, header);
+      ulong deal_in_ticket = -1;
+      int deals_total = HistoryDealsTotal();
+      ulong positions[];
+      ArrayResize(positions, deals_total);
+      int size=0;
+      for(int i=0;i<deals_total;i++)
+      {
+         deal_in_ticket = HistoryDealGetTicket(i);
+         if(deal_in_ticket>0 && HistoryDealGetInteger(deal_in_ticket, DEAL_ENTRY)==DEAL_ENTRY_IN)
+         {
+            ulong position_id = HistoryDealGetInteger(deal_in_ticket, DEAL_POSITION_ID);
+            if(HistoryDealGetInteger(deal_in_ticket, DEAL_TYPE)>1) continue;
+            bool dup=false;
+            for(int j=0;j<size;j++)
+               if(positions[j]==position_id){dup=true;break;}
+            if(!dup) positions[size++] = position_id;
+         }
+      }
+      for(int i=0;i<size;i++)
+      {
+         ulong position_id = positions[i];
+         long magic_number=-1,direction=-1,close_time=-1,open_time=-1;
+         double open_price=-1,close_price=-1,deal_volume=0;
+         double take_profit=-1,stop_loss=-1,profit=0,swap=0,commission=0;
+         string comment="",symb="";
+         if(HistorySelectByPosition(position_id))
+         {
+            int deals_by_pos=HistoryDealsTotal();
+            for(int j=0;j<deals_by_pos;j++)
+            {
+               ulong deal_ticket = HistoryDealGetTicket(j);
+               if(deal_ticket==0) continue;
+               if(HistoryDealGetInteger(deal_ticket,DEAL_ENTRY)==DEAL_ENTRY_OUT)
+               {
+                  close_time = HistoryDealGetInteger(deal_ticket,DEAL_TIME);
+                  close_price = HistoryDealGetDouble(deal_ticket,DEAL_PRICE);
+                  deal_volume += HistoryDealGetDouble(deal_ticket,DEAL_VOLUME);
+               }
+               if(HistoryDealGetInteger(deal_ticket,DEAL_ENTRY)==DEAL_ENTRY_IN)
+               {
+                  direction = HistoryDealGetInteger(deal_ticket,DEAL_TYPE);
+                  open_time = HistoryDealGetInteger(deal_ticket,DEAL_TIME);
+                  open_price = HistoryDealGetDouble(deal_ticket,DEAL_PRICE);
+                  stop_loss = HistoryDealGetDouble(deal_ticket,DEAL_SL);
+                  take_profit = HistoryDealGetDouble(deal_ticket,DEAL_TP);
+               }
+               magic_number = HistoryDealGetInteger(deal_ticket,DEAL_MAGIC);
+               symb = HistoryDealGetString(deal_ticket,DEAL_SYMBOL);
+               commission += HistoryDealGetDouble(deal_ticket,DEAL_COMMISSION);
+               swap += HistoryDealGetDouble(deal_ticket,DEAL_SWAP);
+               profit += HistoryDealGetDouble(deal_ticket,DEAL_PROFIT);
+               comment += HistoryDealGetString(deal_ticket,DEAL_COMMENT) + "/";
+            }
+            double tv_profit = SymbolInfoDouble(symb,SYMBOL_TRADE_TICK_VALUE_PROFIT);
+            double tv_loss   = SymbolInfoDouble(symb,SYMBOL_TRADE_TICK_VALUE_LOSS);
+            double tick_size = SymbolInfoDouble(symb,SYMBOL_TRADE_TICK_SIZE);
+            double points    = SymbolInfoDouble(symb,SYMBOL_POINT);
+            int digits       = (int)SymbolInfoInteger(symb,SYMBOL_DIGITS);
+            double total_profit = profit + swap + commission;
+            double tv = (profit<0)?tv_loss:tv_profit;
+            string line = IntegerToString(magic_number)+","+
+                          symb+","+
+                          IntegerToString((int)direction)+","+
+                          IntegerToString((int)open_time)+","+
+                          IntegerToString((int)close_time)+","+
+                          DoubleToString(open_price,digits)+","+
+                          DoubleToString(close_price,digits)+","+
+                          DoubleToString(stop_loss,digits)+","+
+                          DoubleToString(take_profit,digits)+","+
+                          DoubleToString(deal_volume,2)+","+
+                          DoubleToString(profit,2)+","+
+                          DoubleToString(profit/(deal_volume/tick_size*tv)/points/10,2)+","+
+                          DoubleToString(swap,2)+","+
+                          DoubleToString(swap/(deal_volume/tick_size*tv)/points/10,2)+","+
+                          DoubleToString(commission,2)+","+
+                          DoubleToString(commission/(deal_volume/tick_size*tv)/points/10,2)+","+
+                          DoubleToString(total_profit,2)+","+
+                          DoubleToString(total_profit/(deal_volume/tick_size*tv)/points/10,2)+","+
+                          IntegerToString((int)position_id)+","+
+                          comment;
+            FileWrite(file_handle,line);
+         }
+      }
+   }
+   FileClose(file_handle);
+   Print("Backtest trades exported to ", file_name);
+}
+//+------------------------------------------------------------------+
+void OnTesterDeinit()
+{
+   ExportBacktestToCSV();
 }
