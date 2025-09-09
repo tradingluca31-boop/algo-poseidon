@@ -631,7 +631,8 @@ void ExportBacktestToCSV()
    string full_path = TerminalInfoString(TERMINAL_COMMONDATA_PATH) + "\\Files\\" + file_name;
    Print("Fichier CSV sera créé ici : ", full_path);
 
-   int file_handle = FileOpen(file_name, FILE_WRITE | FILE_CSV | FILE_COMMON | FILE_ANSI);
+   // Ouvre le fichier en UTF-8 pour éviter les problèmes d'encodage
+   int file_handle = FileOpen(file_name, FILE_WRITE | FILE_CSV | FILE_COMMON, 0, CP_UTF8);
    if(file_handle==INVALID_HANDLE)
    {
       Print("Erreur FileOpen : ", GetLastError());
