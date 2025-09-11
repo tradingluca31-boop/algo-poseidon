@@ -10,6 +10,26 @@
 #include <Trade\Trade.mqh>
 CTrade trade;
 
+// Function declarations
+void ResetDailyTradeCount();
+bool BasicConditionsCheck();
+bool IsMonthAllowed(int month);
+bool UpdateIndicators();
+void CheckTradingSignals();
+int GetTradingSignal();
+int GetEMACrossSignal();
+int GetSMMACrossSignal();
+int GetMACDSignal();
+bool CheckRSIFilter(bool isBuySignal);
+bool CheckSMMAFilter(bool isBuySignal);
+double CalculateLotSize();
+void ExecuteBuyOrder(double lotSize);
+void ExecuteSellOrder(double lotSize);
+void ManagePositions();
+void CheckBreakEven();
+void CreateCSVHeader();
+void LogTradeToCSV(string type, double lots, double price, double sl, double tp);
+
 input group "=== SIGNAL GENERATION ==="
 input int SignalMode = 1;  // 0=EMA21/55 cross, 1=MACD, 2=SMMA50/200 cross
 input bool UseEmaSignal = true;
