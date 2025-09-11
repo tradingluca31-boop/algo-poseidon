@@ -68,14 +68,14 @@ input group "=== GESTION DES RISQUES ==="
 input double StopLossPercent = 0.35;    // Stop Loss en % du prix
 input double RiskPercent = 1.0;         // Risque par trade en % du compte
 input bool UseFixedMoney = false;       // Utiliser montant fixe au lieu de %
-input double FixedMoneyRisk = 50.0;     // Montant fixe risqué par trade
+input double FixedMoneyRisk = 100.0;    // Montant fixe risqué par trade
 
 //=== PARAMÈTRES DE TRADING ===
 input group "=== PARAMÈTRES DE TRADING ==="
 input int MaxTradesPerDay = 4;          // Maximum trades par jour
 input int StartHour = 6;                // Heure début trading
 input int EndHour = 15;                 // Heure fin trading
-input double TakeProfit = 500.0;        // Take Profit fixe en points
+input double TakeProfitMoney = 500.0;    // Take Profit en dollars de gain
 
 //=== RÉDUCTION APRÈS PERTES ===
 input group "=== RÉDUCTION APRÈS PERTES ==="
@@ -667,7 +667,12 @@ void ExecuteBuyOrder(double lotSize)
 {
    double price = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
    double stopLoss = price * (1 - StopLossPercent / 100.0);
-   double takeProfit = price + TakeProfit * SymbolInfoDouble(_Symbol, SYMBOL_POINT);
+   
+   // Calcul TP basé sur gain en dollars
+   double tickValue = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_TICK_VALUE);
+   double tickSize = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_TICK_SIZE);
+   double tpDistance = (TakeProfitMoney / (lotSize * tickValue)) * tickSize;
+   double takeProfit = price + tpDistance;
    
    if(trade.Buy(lotSize, _Symbol, price, stopLoss, takeProfit, "Poseidon BUY"))
    {
@@ -675,7 +680,7 @@ void ExecuteBuyOrder(double lotSize)
       lastTradeDate = TimeCurrent();
       
       if(EnableLogging)
-         Print(">>> ORDRE BUY EXÉCUTÉ - Lots:", lotSize, " Prix:", price, " SL:", stopLoss, " TP:", takeProfit);
+         Print(">>> ORDRE BUY EXÉCUTÉ - Lots:", lotSize, " Prix:", price, " SL:", stopLoss, " TP:", takeProfit, " (Gain cible: ", TakeProfitMoney, "$)");
       
       if(ExportToCSV)
          LogTradeToCSV("BUY", lotSize, price, stopLoss, takeProfit);
@@ -693,7 +698,12 @@ void ExecuteSellOrder(double lotSize)
 {
    double price = SymbolInfoDouble(_Symbol, SYMBOL_BID);
    double stopLoss = price * (1 + StopLossPercent / 100.0);
-   double takeProfit = price - TakeProfit * SymbolInfoDouble(_Symbol, SYMBOL_POINT);
+   
+   // Calcul TP basé sur gain en dollars
+   double tickValue = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_TICK_VALUE);
+   double tickSize = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_TICK_SIZE);
+   double tpDistance = (TakeProfitMoney / (lotSize * tickValue)) * tickSize;
+   double takeProfit = price - tpDistance;
    
    if(trade.Sell(lotSize, _Symbol, price, stopLoss, takeProfit, "Poseidon SELL"))
    {
@@ -701,7 +711,7 @@ void ExecuteSellOrder(double lotSize)
       lastTradeDate = TimeCurrent();
       
       if(EnableLogging)
-         Print(">>> ORDRE SELL EXÉCUTÉ - Lots:", lotSize, " Prix:", price, " SL:", stopLoss, " TP:", takeProfit);
+         Print(">>> ORDRE SELL EXÉCUTÉ - Lots:", lotSize, " Prix:", price, " SL:", stopLoss, " TP:", takeProfit, " (Gain cible: ", TakeProfitMoney, "$)");
       
       if(ExportToCSV)
          LogTradeToCSV("SELL", lotSize, price, stopLoss, takeProfit);
