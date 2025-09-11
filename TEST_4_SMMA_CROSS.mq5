@@ -533,7 +533,8 @@ void ManagePositions()
 {
    for(int i = PositionsTotal() - 1; i >= 0; i--)
    {
-      if(PositionSelectByIndex(i))
+      ulong ticket = PositionGetTicket(i);
+      if(ticket > 0 && PositionSelectByTicket(ticket))
       {
          if(PositionGetString(POSITION_SYMBOL) == _Symbol)
          {
@@ -549,7 +550,8 @@ void ManagePositions()
 void CheckBreakEven()
 {
    double openPrice = PositionGetDouble(POSITION_PRICE_OPEN);
-   double currentPrice = (PositionGetInteger(POSITION_TYPE) == POSITION_TYPE_BUY) ? 
+   long positionType = PositionGetInteger(POSITION_TYPE);
+   double currentPrice = (positionType == POSITION_TYPE_BUY) ? 
                          SymbolInfoDouble(_Symbol, SYMBOL_BID) : 
                          SymbolInfoDouble(_Symbol, SYMBOL_ASK);
    
@@ -558,20 +560,22 @@ void CheckBreakEven()
    if(profit >= 300.0) // Break-even at 300$ profit
    {
       double newStopLoss = openPrice;
+      ulong ticket = PositionGetInteger(POSITION_TICKET);
       
-      if(PositionGetInteger(POSITION_TYPE) == POSITION_TYPE_BUY)
+      if(positionType == POSITION_TYPE_BUY)
       {
          if(PositionGetDouble(POSITION_SL) < newStopLoss)
          {
-            trade.PositionModify(PositionGetInteger(POSITION_TICKET), newStopLoss, PositionGetDouble(POSITION_TP));
+            trade.PositionModify(ticket, newStopLoss, PositionGetDouble(POSITION_TP));
             if(EnableLogging) Print("Break-even applied for BUY position");
          }
       }
       else
       {
-         if(PositionGetDouble(POSITION_SL) > newStopLoss || PositionGetDouble(POSITION_SL) == 0)
+         double currentSL = PositionGetDouble(POSITION_SL);
+         if(currentSL > newStopLoss || currentSL == 0.0)
          {
-            trade.PositionModify(PositionGetInteger(POSITION_TICKET), newStopLoss, PositionGetDouble(POSITION_TP));
+            trade.PositionModify(ticket, newStopLoss, PositionGetDouble(POSITION_TP));
             if(EnableLogging) Print("Break-even applied for SELL position");
          }
       }
