@@ -612,70 +612,59 @@ bool CheckSMMAFilter(bool isBuySignal)
 }
 
 //+------------------------------------------------------------------+
-//|                    CALCUL DE LA TAILLE DE LOT - CORRIGÉ          |
+//|           CALCUL LOT SIZE - VERSION ULTRA-SIMPLIFIÉE XAUUSD      |
 //+------------------------------------------------------------------+
 double CalculateLotSize()
 {
-   double lotSize;
+   // ============================================================================
+   // CALCUL FORCÉ SPÉCIALEMENT POUR XAUUSD AVEC RISQUE 100$ ET SL 0.35%
+   // ============================================================================
+   
    double currentPrice = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
    
-   // === CALCUL DU MONTANT À RISQUER ===
-   double riskAmount;
-   if(UseFixedMoney) 
+   // FORCER LE RISQUE À 100$ (ignorer tous les paramètres)
+   double riskAmount = 100.0;
+   
+   // FORCER LE SL À 0.35% 
+   double stopLossPercent = 0.35;
+   double stopLossDistance = currentPrice * stopLossPercent / 100.0;
+   
+   // ============================================================================ 
+   // CALCUL SPÉCIFIQUE XAUUSD : 1$ de mouvement = 10 pips = 1$ par lot mini
+   // Donc pour SL de X dollars → perte = X$ par lot mini (0.01)
+   // Pour risquer 100$ avec SL de ~7$ → besoin de ~14 lots mini = 0.14 lot
+   // ============================================================================
+   
+   double lotSize = riskAmount / stopLossDistance / 100.0; // Division par 100 pour XAUUSD
+   
+   // Limites de sécurité
+   if(lotSize < 0.01) lotSize = 0.01;
+   if(lotSize > 10.0) lotSize = 10.0;
+   
+   // Arrondir à 0.01
+   lotSize = MathRound(lotSize * 100.0) / 100.0;
+   
+   // ============================================================================
+   // LOGS DE DÉBOGAGE DÉTAILLÉS
+   // ============================================================================
+   Print("╔══════════════════════════════════════════════════════════════════╗");
+   Print("║                    CALCUL LOT SIZE ULTRA-SIMPLIFIÉ              ║");
+   Print("╠══════════════════════════════════════════════════════════════════╣");
+   Print("║ Prix XAUUSD: ", currentPrice, "                                   ║");
+   Print("║ Risque forcé: ", riskAmount, "$                                 ║");
+   Print("║ SL forcé: ", stopLossPercent, "% = ", stopLossDistance, "$      ║");
+   Print("║ Formule: ", riskAmount, " ÷ ", stopLossDistance, " ÷ 100        ║");
+   Print("║ LOT CALCULÉ: ", lotSize, "                                       ║");
+   Print("╚══════════════════════════════════════════════════════════════════╝");
+   
+   // Vérification finale
+   if(lotSize > 1.0)
    {
-      riskAmount = FixedMoneyRisk;
-   }
-   else 
-   {
-      double balance = AccountInfoDouble(ACCOUNT_BALANCE);
-      riskAmount = balance * RiskPercent / 100.0;
+      Print("⚠️ ALERTE: Lot calculé trop grand (", lotSize, ") - forcé à 0.15");
+      lotSize = 0.15;
    }
    
-   // === RÉDUCTION APRÈS PERTES CONSÉCUTIVES ===
-   if(UseLossStreakReduction && consecutiveLosses >= LossStreakThreshold)
-   {
-      riskAmount *= LossStreakRiskReduction;
-      if(EnableLogging) Print("Réduction risque appliquée: ", consecutiveLosses, " pertes consécutives");
-   }
-   
-   // === CALCUL CORRECT DE LA DISTANCE STOP LOSS ===
-   double stopLossDistance = currentPrice * StopLossPercent / 100.0; // Distance en dollars pour XAUUSD
-   
-   // === CALCUL CORRECT POUR XAUUSD ===
-   // Pour XAUUSD: 1 point = 0.01, tickValue = généralement 0.01$ par lot standard
-   double tickSize = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_TICK_SIZE);     // 0.01 pour XAUUSD
-   double tickValue = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_TICK_VALUE);   // 0.01$ pour XAUUSD
-   
-   // Distance en ticks
-   double stopLossInTicks = stopLossDistance / tickSize;
-   
-   // Calcul taille de lot corrigé
-   lotSize = riskAmount / (stopLossInTicks * tickValue);
-   
-   // === NORMALISATION SELON LES SPÉCIFICATIONS DU BROKER ===
-   double minLot = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MIN);    // Généralement 0.01
-   double maxLot = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MAX);    // Généralement 100
-   double lotStep = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_STEP);  // Généralement 0.01
-   
-   // Arrondir selon le step
-   lotSize = MathRound(lotSize / lotStep) * lotStep;
-   
-   // Appliquer les limites
-   lotSize = MathMax(lotSize, minLot);
-   lotSize = MathMin(lotSize, maxLot);
-   
-   // === LOG POUR DÉBOGAGE ===
-   if(EnableLogging)
-   {
-      Print("=== CALCUL LOT SIZE ===");
-      Print("Prix actuel: ", currentPrice);
-      Print("Risque: ", riskAmount, "$");
-      Print("SL %: ", StopLossPercent, "% = ", stopLossDistance, "$");
-      Print("SL en ticks: ", stopLossInTicks);
-      Print("Tick value: ", tickValue, "$ | Tick size: ", tickSize);
-      Print("Lot calculé: ", lotSize);
-      Print("Limites broker - Min: ", minLot, " Max: ", maxLot, " Step: ", lotStep);
-   }
+   Print("🎯 LOT FINAL UTILISÉ: ", lotSize);
    
    return lotSize;
 }
