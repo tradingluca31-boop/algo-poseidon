@@ -93,7 +93,7 @@ int hEMA21=-1, hEMA55=-1;
 int hSMAfast=-1, hSMAslow=-1;
 
 int hSMMA50 = -1;   // [ADDED] Handle SMMA50 (filtre)
-int hSMMA50_Signal = -1;   // [ADDED] Handle SMMA50 pour signal H1
+int hSMMA50_Signal = -1, hSMMA200_Signal = -1;   // [ADDED] Handles SMMA50/200 pour croisement H1
 
 // [ADDED] RSI variables
 int rsi_handle = INVALID_HANDLE;
@@ -212,24 +212,21 @@ bool GetMACD_HistSignal(bool &buy,bool &sell)
    return true;
 }
 
-// SMMA50 direction signal H1 - on suit la SMMA50
+// SMMA50/200 croisement H1 - on suit la SMMA50  
 bool GetSMMA50_DirectionH1(bool &buy, bool &sell)
 {
    buy = false; sell = false;
    if(!InpUseSMMA_Cross) return false;
    
-   double smma50[];
-   ArraySetAsSeries(smma50, true);
+   double smma50[], smma200[];
+   ArraySetAsSeries(smma50, true); ArraySetAsSeries(smma200, true);
    
    if(CopyBuffer(hSMMA50_Signal, 0, 0, 2, smma50) < 2) return false;
+   if(CopyBuffer(hSMMA200_Signal, 0, 0, 2, smma200) < 2) return false;
    
-   // Signal persistant : prix au-dessus SMMA50 = BUY, prix en-dessous = SELL  
-   double bid = SymbolInfoDouble(sym, SYMBOL_BID);
-   double ask = SymbolInfoDouble(sym, SYMBOL_ASK);
-   double price = (bid + ask) * 0.5;
-   
-   buy = (price > smma50[0]);
-   sell = (price < smma50[0]);
+   // Signal persistant : SMMA50 > SMMA200 = BUY, SMMA50 < SMMA200 = SELL
+   buy = (smma50[0] > smma200[0]);
+   sell = (smma50[0] < smma200[0]);
    
    return true;
 }
@@ -452,9 +449,10 @@ int OnInit()
    hSMAslow=iMA(sym,InpSignalTF,InpMACD_Slow,0,MODE_SMA,PRICE_CLOSE);
    if(InpUseSMMA50Trend) hSMMA50 = iMA(sym, InpSMMA_TF, InpSMMA_Period, 0, MODE_SMMA, PRICE_CLOSE);
    
-   // [ADDED] Initialize SMMA signal H1
+   // [ADDED] Initialize SMMA signals H1  
    if(InpUseSMMA_Cross) {
       hSMMA50_Signal = iMA(sym, PERIOD_H1, 50, 0, MODE_SMMA, PRICE_CLOSE);
+      hSMMA200_Signal = iMA(sym, PERIOD_H1, 200, 0, MODE_SMMA, PRICE_CLOSE);
    }
    
    // [ADDED] Initialize RSI handle
@@ -466,7 +464,7 @@ int OnInit()
       }
    }
    
-   if(hEMA21==INVALID_HANDLE || hEMA55==INVALID_HANDLE || hSMAfast==INVALID_HANDLE || hSMAslow==INVALID_HANDLE || (InpUseSMMA50Trend && hSMMA50==INVALID_HANDLE) || (InpUseSMMA_Cross && hSMMA50_Signal==INVALID_HANDLE)){
+   if(hEMA21==INVALID_HANDLE || hEMA55==INVALID_HANDLE || hSMAfast==INVALID_HANDLE || hSMAslow==INVALID_HANDLE || (InpUseSMMA50Trend && hSMMA50==INVALID_HANDLE) || (InpUseSMMA_Cross && (hSMMA50_Signal==INVALID_HANDLE || hSMMA200_Signal==INVALID_HANDLE))){
       Print("Erreur: handle indicateur invalide"); return INIT_FAILED;
    }
    return INIT_SUCCEEDED;
@@ -488,6 +486,7 @@ void OnDeinit(const int reason)
    if(hSMAslow!=INVALID_HANDLE) IndicatorRelease(hSMAslow);
    if(hSMMA50 !=INVALID_HANDLE) IndicatorRelease(hSMMA50);
    if(hSMMA50_Signal!=INVALID_HANDLE) IndicatorRelease(hSMMA50_Signal);
+   if(hSMMA200_Signal!=INVALID_HANDLE) IndicatorRelease(hSMMA200_Signal);
    if(rsi_handle!=INVALID_HANDLE) IndicatorRelease(rsi_handle);
    
    Print("✅ OnDeinit: Handles libérés");
