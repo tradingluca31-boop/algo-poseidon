@@ -23,6 +23,7 @@ input SignalMode InpSignalMode         = EMA_OR_MACD; // "OU" par défaut
 input bool     InpUseEMA_Cross         = true;        // EMA21/55 croisement
 input bool     InpUseMACD              = true;        // MACD SMA 20/45/15
 input bool     InpUseSMMA_Cross        = true;        // SMMA50/200 croisement H1
+input int      InpMinSignalsRequired   = 2;           // Signaux minimum requis (1, 2 ou 3)
 
 // --- MACD SMA config ---
 input int      InpMACD_Fast            = 20;          // SMA rapide
@@ -377,10 +378,10 @@ void TryOpenTrade()
    bool allowBuy  = (!InpUseSMMA50Trend || tdir>0);
    bool allowSell = (!InpUseSMMA50Trend || tdir<0);
 
-   // Règle 2/3 signaux
+   // Règle X/3 signaux (configurable)
    int dir=0;
-   if(scoreBuy >= 2 && allowBuy && InpAllowBuys) dir=+1;
-   if(scoreSell >= 2 && allowSell && InpAllowSells && dir==0) dir=-1;
+   if(scoreBuy >= InpMinSignalsRequired && allowBuy && InpAllowBuys) dir=+1;
+   if(scoreSell >= InpMinSignalsRequired && allowSell && InpAllowSells && dir==0) dir=-1;
    if(dir==0) return;
 
    double entry=(dir>0)? SymbolInfoDouble(sym,SYMBOL_ASK):SymbolInfoDouble(sym,SYMBOL_BID);
