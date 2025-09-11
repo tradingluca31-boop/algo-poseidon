@@ -354,8 +354,8 @@ bool allowBuy  = (!InpUseSMMA50Trend || tdir>0);
 bool allowSell = (!InpUseSMMA50Trend || tdir<0);
 
 int dir=0;
-if(scoreBuy  >= InpMinConditions && allowBuy  && InpAllowBuys)  dir=+1;
-if(scoreSell >= InpMinConditions && allowSell && InpAllowSells && dir==0) dir=-1;
+if(scoreBuy > 0 && allowBuy  && InpAllowBuys)  dir=+1;
+if(scoreSell > 0 && allowSell && InpAllowSells && dir==0) dir=-1;
 if(dir==0) return;
 
    double entry=(dir>0)? SymbolInfoDouble(sym,SYMBOL_ASK):SymbolInfoDouble(sym,SYMBOL_BID);
