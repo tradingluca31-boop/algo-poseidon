@@ -22,6 +22,7 @@ enum SignalMode { EMA_OR_MACD=0, EMA_ONLY=1, MACD_ONLY=2 };
 input SignalMode InpSignalMode         = EMA_OR_MACD; // "OU" par défaut
 input bool     InpUseEMA_Cross         = true;        // EMA21/55 croisement
 input bool     InpUseMACD              = true;        // MACD SMA 20/45/15
+input bool     InpUseSMMA_Cross        = true;        // SMMA50/200 croisement H1
 
 // --- MACD SMA config ---
 input int      InpMACD_Fast            = 20;          // SMA rapide
@@ -92,7 +93,8 @@ int gLossStreak = 0;   // [ADDED] Compteur pertes consécutives — Poseidon 03/
 int hEMA21=-1, hEMA55=-1;
 int hSMAfast=-1, hSMAslow=-1;
 
-int hSMMA50 = -1;   // [ADDED] Handle SMMA50
+int hSMMA50 = -1;   // [ADDED] Handle SMMA50 (filtre)
+int hSMMA50_Signal = -1, hSMMA200_Signal = -1;   // [ADDED] Handles SMMA50/200 pour signaux H1
 
 // [ADDED] RSI variables
 int rsi_handle = INVALID_HANDLE;
@@ -244,6 +246,25 @@ bool GetMACD_HistSignal(bool &buy,bool &sell)
    return true;
 }
 
+// SMMA50/200 direction signal (H1)
+bool GetSMMA_CrossSignal(bool &buy, bool &sell)
+{
+   buy = false; sell = false;
+   if(!InpUseSMMA_Cross) return false;
+   
+   double smma50[], smma200[];
+   ArraySetAsSeries(smma50, true); ArraySetAsSeries(smma200, true);
+   
+   if(CopyBuffer(hSMMA50_Signal, 0, 0, 2, smma50) < 2) return false;
+   if(CopyBuffer(hSMMA200_Signal, 0, 0, 2, smma200) < 2) return false;
+   
+   // Signal persistant : SMMA50 > SMMA200 = BUY, SMMA50 < SMMA200 = SELL
+   buy = (smma50[0] > smma200[0]);
+   sell = (smma50[0] < smma200[0]);
+   
+   return true;
+}
+
 
 //======================== Prix/SL/TP ========================
 void MakeSL_Init(int dir,double entry,double &sl)
@@ -326,36 +347,41 @@ void TryOpenTrade()
    // [ADDED] RSI Filter - bloque si conditions non respectées
    if(!IsRSIFilterOK()) return;
 
-   // [CHANGED] Scoring 4 conditions (SMMA + EMA + MACD_hist + MACD_cross) + filtre SMMA directionnel
-int scoreBuy=0, scoreSell=0;
+   // [CHANGED] 3 SIGNAUX: EMA21/55, MACD, SMMA50/200 - Règle 2/3
+   int scoreBuy=0, scoreSell=0;
 
-// 1) SMMA50 H4 tendance
-int tdir = TrendDir_SMMA50(); // +1/-1/0
-if(InpUseSMMA50Trend){
-   if(tdir>0) scoreBuy++;
-   else if(tdir<0) scoreSell++;
-   else return; // neutre -> pas d'entrée
-}
+   // SIGNAL 1) EMA21/55 cross
+   bool emaB=false, emaS=false; 
+   GetEMACrossSignal(emaB, emaS);
+   if(emaB) scoreBuy++; 
+   if(emaS) scoreSell++;
 
-// 2) EMA21/55 cross
-bool emaB=false, emaS=false; GetEMACrossSignal(emaB, emaS);
-if(emaB) scoreBuy++; if(emaS) scoreSell++;
+   // SIGNAL 2) MACD (combiné histogramme + croisement)
+   bool macdBuy=false, macdSell=false;
+   bool mhB=false, mhS=false, mcB=false, mcS=false;
+   GetMACD_HistSignal(mhB, mhS);
+   GetMACD_CrossSignal(mcB, mcS);
+   macdBuy = (mhB && mcB);   // Les deux doivent être alignés
+   macdSell = (mhS && mcS);  // Les deux doivent être alignés
+   if(macdBuy) scoreBuy++;
+   if(macdSell) scoreSell++;
 
-// 3) MACD histogramme
-bool mhB=false, mhS=false; GetMACD_HistSignal(mhB, mhS);
-if(mhB) scoreBuy++; if(mhS) scoreSell++;
+   // SIGNAL 3) SMMA50/200 direction (H1)
+   bool smmaB=false, smmaS=false; 
+   GetSMMA_CrossSignal(smmaB, smmaS);
+   if(smmaB) scoreBuy++; 
+   if(smmaS) scoreSell++;
 
-// 4) MACD croisement lignes
-bool mcB=false, mcS=false; GetMACD_CrossSignal(mcB, mcS);
-if(mcB) scoreBuy++; if(mcS) scoreSell++;
+   // FILTRES (ne comptent pas dans le score)
+   int tdir = TrendDir_SMMA50(); // +1/-1/0 (filtre SMMA50 H4)
+   bool allowBuy  = (!InpUseSMMA50Trend || tdir>0);
+   bool allowSell = (!InpUseSMMA50Trend || tdir<0);
 
-bool allowBuy  = (!InpUseSMMA50Trend || tdir>0);
-bool allowSell = (!InpUseSMMA50Trend || tdir<0);
-
-int dir=0;
-if(scoreBuy > 0 && allowBuy  && InpAllowBuys)  dir=+1;
-if(scoreSell > 0 && allowSell && InpAllowSells && dir==0) dir=-1;
-if(dir==0) return;
+   // Règle 2/3 signaux
+   int dir=0;
+   if(scoreBuy >= 2 && allowBuy && InpAllowBuys) dir=+1;
+   if(scoreSell >= 2 && allowSell && InpAllowSells && dir==0) dir=-1;
+   if(dir==0) return;
 
    double entry=(dir>0)? SymbolInfoDouble(sym,SYMBOL_ASK):SymbolInfoDouble(sym,SYMBOL_BID);
    double sl; MakeSL_Init(dir,entry,sl);
@@ -461,6 +487,12 @@ int OnInit()
    hSMAslow=iMA(sym,InpSignalTF,InpMACD_Slow,0,MODE_SMA,PRICE_CLOSE);
    if(InpUseSMMA50Trend) hSMMA50 = iMA(sym, InpSMMA_TF, InpSMMA_Period, 0, MODE_SMMA, PRICE_CLOSE);
    
+   // [ADDED] Initialize SMMA signals H1
+   if(InpUseSMMA_Cross) {
+      hSMMA50_Signal = iMA(sym, PERIOD_H1, 50, 0, MODE_SMMA, PRICE_CLOSE);
+      hSMMA200_Signal = iMA(sym, PERIOD_H1, 200, 0, MODE_SMMA, PRICE_CLOSE);
+   }
+   
    // [ADDED] Initialize RSI handle
    if(InpUseRSI) {
       rsi_handle = iRSI(sym, InpRSITF, InpRSIPeriod, PRICE_CLOSE);
@@ -470,7 +502,7 @@ int OnInit()
       }
    }
    
-   if(hEMA21==INVALID_HANDLE || hEMA55==INVALID_HANDLE || hSMAfast==INVALID_HANDLE || hSMAslow==INVALID_HANDLE || (InpUseSMMA50Trend && hSMMA50==INVALID_HANDLE)){
+   if(hEMA21==INVALID_HANDLE || hEMA55==INVALID_HANDLE || hSMAfast==INVALID_HANDLE || hSMAslow==INVALID_HANDLE || (InpUseSMMA50Trend && hSMMA50==INVALID_HANDLE) || (InpUseSMMA_Cross && (hSMMA50_Signal==INVALID_HANDLE || hSMMA200_Signal==INVALID_HANDLE))){
       Print("Erreur: handle indicateur invalide"); return INIT_FAILED;
    }
    return INIT_SUCCEEDED;
@@ -491,6 +523,8 @@ void OnDeinit(const int reason)
    if(hSMAfast!=INVALID_HANDLE) IndicatorRelease(hSMAfast);
    if(hSMAslow!=INVALID_HANDLE) IndicatorRelease(hSMAslow);
    if(hSMMA50 !=INVALID_HANDLE) IndicatorRelease(hSMMA50);
+   if(hSMMA50_Signal!=INVALID_HANDLE) IndicatorRelease(hSMMA50_Signal);
+   if(hSMMA200_Signal!=INVALID_HANDLE) IndicatorRelease(hSMMA200_Signal);
    if(rsi_handle!=INVALID_HANDLE) IndicatorRelease(rsi_handle);
    
    Print("✅ OnDeinit: Handles libérés");
