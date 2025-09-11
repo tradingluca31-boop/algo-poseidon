@@ -70,7 +70,8 @@ input bool ExportToCSV = true;
 int handleRSI;
 int handleEMA21;
 int handleEMA55;
-int handleSMMA50;
+int handleSMMA50_H1; // Pour signal SMMA cross
+int handleSMMA50_H4; // Pour filtre
 int handleSMMA200; // Nouveau handle pour SMMA200
 int handleMACD;
 
@@ -85,7 +86,8 @@ string csvFileName;
 double rsiValues[];
 double ema21Values[];
 double ema55Values[];
-double smma50Values[];
+double smma50H1Values[]; // Pour signal cross
+double smma50H4Values[]; // Pour filtre
 double smma200Values[]; // Nouveau array pour SMMA200
 double macdMainValues[];
 double macdSignalValues[];
@@ -98,17 +100,18 @@ int OnInit()
    currentRiskPercent = RiskPercent;
    
    // Initialize indicators
-   handleRSI = iRSI(_Symbol, PERIOD_H1, RSI_Period, PRICE_CLOSE);
+   handleRSI = iRSI(_Symbol, PERIOD_H4, RSI_Period, PRICE_CLOSE); // RSI en H4
    handleEMA21 = iMA(_Symbol, PERIOD_H1, EMA21_Period, 0, MODE_EMA, PRICE_CLOSE);
    handleEMA55 = iMA(_Symbol, PERIOD_H1, EMA55_Period, 0, MODE_EMA, PRICE_CLOSE);
-   handleSMMA50 = iMA(_Symbol, PERIOD_H1, SMMA50_Period, 0, MODE_SMMA, PRICE_CLOSE);
-   handleSMMA200 = iMA(_Symbol, PERIOD_H1, SMMA200_Period, 0, MODE_SMMA, PRICE_CLOSE); // Initialisation SMMA200
+   handleSMMA50_H1 = iMA(_Symbol, PERIOD_H1, SMMA50_Period, 0, MODE_SMMA, PRICE_CLOSE); // SMMA50 H1 pour signal
+   handleSMMA50_H4 = iMA(_Symbol, PERIOD_H4, SMMA50_Period, 0, MODE_SMMA, PRICE_CLOSE); // SMMA50 H4 pour filtre
+   handleSMMA200 = iMA(_Symbol, PERIOD_H1, SMMA200_Period, 0, MODE_SMMA, PRICE_CLOSE); // SMMA200 H1 pour signal
    handleMACD = iMACD(_Symbol, PERIOD_H1, MACD_FastEMA, MACD_SlowEMA, MACD_SignalSMA, PRICE_CLOSE);
    
    // Check if all indicators are valid
    if(handleRSI == INVALID_HANDLE || handleEMA21 == INVALID_HANDLE || 
-      handleEMA55 == INVALID_HANDLE || handleSMMA50 == INVALID_HANDLE || 
-      handleSMMA200 == INVALID_HANDLE || handleMACD == INVALID_HANDLE)
+      handleEMA55 == INVALID_HANDLE || handleSMMA50_H1 == INVALID_HANDLE || 
+      handleSMMA50_H4 == INVALID_HANDLE || handleSMMA200 == INVALID_HANDLE || handleMACD == INVALID_HANDLE)
    {
       Print("Error creating indicators");
       return(INIT_FAILED);
@@ -136,8 +139,9 @@ void OnDeinit(const int reason)
    if(handleRSI != INVALID_HANDLE) IndicatorRelease(handleRSI);
    if(handleEMA21 != INVALID_HANDLE) IndicatorRelease(handleEMA21);
    if(handleEMA55 != INVALID_HANDLE) IndicatorRelease(handleEMA55);
-   if(handleSMMA50 != INVALID_HANDLE) IndicatorRelease(handleSMMA50);
-   if(handleSMMA200 != INVALID_HANDLE) IndicatorRelease(handleSMMA200); // Libération SMMA200
+   if(handleSMMA50_H1 != INVALID_HANDLE) IndicatorRelease(handleSMMA50_H1);
+   if(handleSMMA50_H4 != INVALID_HANDLE) IndicatorRelease(handleSMMA50_H4);
+   if(handleSMMA200 != INVALID_HANDLE) IndicatorRelease(handleSMMA200);
    if(handleMACD != INVALID_HANDLE) IndicatorRelease(handleMACD);
 }
 
@@ -238,16 +242,18 @@ bool UpdateIndicators()
    ArraySetAsSeries(rsiValues, true);
    ArraySetAsSeries(ema21Values, true);
    ArraySetAsSeries(ema55Values, true);
-   ArraySetAsSeries(smma50Values, true);
-   ArraySetAsSeries(smma200Values, true); // Configuration SMMA200
+   ArraySetAsSeries(smma50H1Values, true); // SMMA50 H1
+   ArraySetAsSeries(smma50H4Values, true); // SMMA50 H4
+   ArraySetAsSeries(smma200Values, true);
    ArraySetAsSeries(macdMainValues, true);
    ArraySetAsSeries(macdSignalValues, true);
    
    if(CopyBuffer(handleRSI, 0, 0, 3, rsiValues) <= 0) return false;
    if(CopyBuffer(handleEMA21, 0, 0, 3, ema21Values) <= 0) return false;
    if(CopyBuffer(handleEMA55, 0, 0, 3, ema55Values) <= 0) return false;
-   if(CopyBuffer(handleSMMA50, 0, 0, 3, smma50Values) <= 0) return false;
-   if(CopyBuffer(handleSMMA200, 0, 0, 3, smma200Values) <= 0) return false; // Copie SMMA200
+   if(CopyBuffer(handleSMMA50_H1, 0, 0, 3, smma50H1Values) <= 0) return false; // SMMA50 H1 pour signal
+   if(CopyBuffer(handleSMMA50_H4, 0, 0, 3, smma50H4Values) <= 0) return false; // SMMA50 H4 pour filtre
+   if(CopyBuffer(handleSMMA200, 0, 0, 3, smma200Values) <= 0) return false;
    if(CopyBuffer(handleMACD, 0, 0, 3, macdMainValues) <= 0) return false;
    if(CopyBuffer(handleMACD, 1, 0, 3, macdSignalValues) <= 0) return false;
    
@@ -339,9 +345,9 @@ int GetEMACrossSignal()
 //+------------------------------------------------------------------+
 int GetSMMACrossSignal()
 {
-   // Current and previous SMMA values
-   double smma50_current = smma50Values[0];
-   double smma50_previous = smma50Values[1];
+   // Current and previous SMMA values (H1 pour le signal)
+   double smma50_current = smma50H1Values[0];
+   double smma50_previous = smma50H1Values[1];
    double smma200_current = smma200Values[0];
    double smma200_previous = smma200Values[1];
    
@@ -402,10 +408,10 @@ bool CheckRSIFilter(bool isBuySignal)
 bool CheckSMMAFilter(bool isBuySignal)
 {
    double price = SymbolInfoDouble(_Symbol, SYMBOL_BID);
-   double smma50 = smma50Values[0];
+   double smma50_h4 = smma50H4Values[0]; // Utilise SMMA50 H4 pour le filtre
    
-   if(isBuySignal && price < smma50) return false;
-   if(!isBuySignal && price > smma50) return false;
+   if(isBuySignal && price < smma50_h4) return false;
+   if(!isBuySignal && price > smma50_h4) return false;
    
    return true;
 }
