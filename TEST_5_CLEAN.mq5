@@ -677,11 +677,12 @@ void ExecuteBuyOrder(double lotSize)
    double price = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
    double stopLoss = price * (1 - StopLossPercent / 100.0);
    
-   // Calcul TP basé sur gain en dollars
-   double tickValue = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_TICK_VALUE);
-   double tickSize = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_TICK_SIZE);
-   double tpDistance = (TakeProfitMoney / (lotSize * tickValue)) * tickSize;
+   // Calcul TP SIMPLIFIÉ pour XAUUSD - Target 500$ de gain
+   double targetProfit = 500.0; // Forcer à 500$ (5R de 100$)
+   double tpDistance = targetProfit / (lotSize * 100.0); // Pour XAUUSD: 1$ = 100 lots mini de profit
    double takeProfit = price + tpDistance;
+   
+   Print("🎯 TP BUY: Lot=", lotSize, " Target=", targetProfit, "$ Distance=", tpDistance, "$ TP=", takeProfit);
    
    if(trade.Buy(lotSize, _Symbol, price, stopLoss, takeProfit, "Poseidon BUY"))
    {
@@ -708,11 +709,12 @@ void ExecuteSellOrder(double lotSize)
    double price = SymbolInfoDouble(_Symbol, SYMBOL_BID);
    double stopLoss = price * (1 + StopLossPercent / 100.0);
    
-   // Calcul TP basé sur gain en dollars
-   double tickValue = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_TICK_VALUE);
-   double tickSize = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_TICK_SIZE);
-   double tpDistance = (TakeProfitMoney / (lotSize * tickValue)) * tickSize;
+   // Calcul TP SIMPLIFIÉ pour XAUUSD - Target 500$ de gain
+   double targetProfit = 500.0; // Forcer à 500$ (5R de 100$)
+   double tpDistance = targetProfit / (lotSize * 100.0); // Pour XAUUSD: 1$ = 100 lots mini de profit
    double takeProfit = price - tpDistance;
+   
+   Print("🎯 TP SELL: Lot=", lotSize, " Target=", targetProfit, "$ Distance=", tpDistance, "$ TP=", takeProfit);
    
    if(trade.Sell(lotSize, _Symbol, price, stopLoss, takeProfit, "Poseidon SELL"))
    {
