@@ -2,8 +2,8 @@
 //|                                   TEST CLAUDE - Export CSV Fix   |
 //|  Version corrigée avec export CSV fonctionnel                    |
 //|  H1 – Entrées 6:00-15:00 (serveur)                               |
-//|  Signal: EMA21/55 OU MACD(SMA 20,45,15)                          |
-//|  Max 2 trades/jour, SL 0.35%, TP +500$                           |
+//|  Signal: 2/3 conditions persistantes (EMA21/55 + MACD hist + MACD cross)|
+//|  Max 4 trades/jour, SL 0.35%, TP 1.75%                          |
 //|  BE (0$) dès profit >= 300$ OU move >= 3R                        |
 //|  Risque FIXE = InpRiskPercent (pas de palier / pas de séries)    |
 //+------------------------------------------------------------------+
@@ -25,7 +25,7 @@ input bool     InpUseMACD              = true;        // MACD SMA 20/45/15
 
 // --- MACD SMA config ---
 input int      InpMACD_Fast            = 20;          // SMA rapide
-input int      InpMACD_Slow            = 35;          // SMA lente
+input int      InpMACD_Slow            = 45;          // SMA lente
 input int      InpMACD_Signal          = 15;          // SMA du MACD
 
 // --- Risque / gestion (en %) ---
@@ -51,15 +51,15 @@ input ENUM_TIMEFRAMES InpSignalTF      = PERIOD_H1;   // TF signaux (H1)
 input int      InpSessionStartHour     = 6;           // Ouverture 6h (heure serveur)
 input int      InpSessionEndHour       = 15;          // Fermeture 15h (pas de nouvelles entrées après)
 input int      InpSlippagePoints       = 20;
-input bool     InpVerboseLogs          = false;
+input bool     InpVerboseLogs          = true;
 // [ADDED] === SMMA50 + Score conditions (optimisables) ===
-input bool InpUseSMMA50Trend    = true;             // Filtre tendance SMMA50
+input bool InpUseSMMA50Trend    = false;            // Filtre tendance SMMA50
 input int  InpSMMA_Period       = 50;               // Période SMMA (Value=50 / Start=20 / Step=5 / Stop=200)
 input ENUM_TIMEFRAMES InpSMMA_TF = PERIOD_H4;       // UT SMMA (H4)
-input int  InpMinConditions     = 3;                // Conditions minimales requises (Value=3 / Start=2 / Step=1 / Stop=4)
+input int  InpMinConditions     = 1;                // Conditions minimales requises (Value=1 / Start=1 / Step=1 / Stop=3)
 
 // [ADDED] === RSI Filter ===
-input bool InpUseRSI = true;                                // Utiliser filtre RSI
+input bool InpUseRSI = false;                               // Utiliser filtre RSI
 input ENUM_TIMEFRAMES InpRSITF = PERIOD_H4;                 // TimeFrame RSI
 input int InpRSIPeriod = 14;                                // Période RSI (Value=14 / Start=7 / Step=1 / Stop=40)
 input int InpRSIOverbought = 70;                            // Seuil surachat RSI (Value=70 / Start=60 / Step=1 / Stop=85)
@@ -70,7 +70,7 @@ input bool InpRSIBlockEqual = true;                         // Bloquer si == aux
 //=== Month Filter Inputs START ===========================================
 input bool InpTrade_Janvier   = true;  // Trader en Janvier
 input bool InpTrade_Fevrier   = true;  // Trader en Fevrier
-input bool InpTrade_Mars      = false;  // Trader en Mars
+input bool InpTrade_Mars      = true;   // Trader en Mars
 input bool InpTrade_Avril     = true;   // Trader en Avril
 input bool InpTrade_Mai       = true;   // Trader en Mai
 input bool InpTrade_Juin      = true;   // Trader en Juin
@@ -99,6 +99,25 @@ int hSMMA50 = -1;   // [ADDED] Handle SMMA50
 int rsi_handle = INVALID_HANDLE;
 double rsi_val = EMPTY_VALUE;
 datetime rsi_last_bar_time = 0;
+
+// [ADDED] Système de conditions persistantes
+input int InpConditionValidityHours = 4;  // Durée validité conditions (heures)
+
+// Variables persistantes pour BUY
+bool gEMACrossBuy = false;
+bool gMACDHistBuy = false;
+bool gMACDCrossBuy = false;
+datetime gEMACrossBuyTime = 0;
+datetime gMACDHistBuyTime = 0;
+datetime gMACDCrossBuyTime = 0;
+
+// Variables persistantes pour SELL
+bool gEMACrossSell = false;
+bool gMACDHistSell = false;
+bool gMACDCrossSell = false;
+datetime gEMACrossSellTime = 0;
+datetime gMACDHistSellTime = 0;
+datetime gMACDCrossSellTime = 0;
 //======================== Utils Temps ======================
 bool IsNewBar(){ datetime ct=iTime(sym, InpSignalTF, 0); if(ct!=lastBarTime){lastBarTime=ct; return true;} return false; }
 
@@ -151,6 +170,138 @@ bool GetMACD_SMA(double &macd_1,double &sig_1,double &macd_2,double &sig_2)
    macd_2 = macdArr[1];
    sig_2  = sigArr[1];
    return true;
+}
+
+//======================== Conditions Persistantes ========================
+// Vérifie si une condition est encore valide (pas expirée)
+bool IsConditionValid(datetime conditionTime)
+{
+   if(conditionTime == 0) return false;
+   return (TimeCurrent() - conditionTime) <= (InpConditionValidityHours * 3600);
+}
+
+// Reset les conditions expirées
+void ResetExpiredConditions()
+{
+   datetime current = TimeCurrent();
+   
+   // Reset BUY conditions si expirées
+   if(!IsConditionValid(gEMACrossBuyTime)) {
+      gEMACrossBuy = false;
+      gEMACrossBuyTime = 0;
+   }
+   if(!IsConditionValid(gMACDHistBuyTime)) {
+      gMACDHistBuy = false;
+      gMACDHistBuyTime = 0;
+   }
+   if(!IsConditionValid(gMACDCrossBuyTime)) {
+      gMACDCrossBuy = false;
+      gMACDCrossBuyTime = 0;
+   }
+   
+   // Reset SELL conditions si expirées
+   if(!IsConditionValid(gEMACrossSellTime)) {
+      gEMACrossSell = false;
+      gEMACrossSellTime = 0;
+   }
+   if(!IsConditionValid(gMACDHistSellTime)) {
+      gMACDHistSell = false;
+      gMACDHistSellTime = 0;
+   }
+   if(!IsConditionValid(gMACDCrossSellTime)) {
+      gMACDCrossSell = false;
+      gMACDCrossSellTime = 0;
+   }
+}
+
+// Met à jour les conditions persistantes
+void UpdatePersistentConditions()
+{
+   datetime current = TimeCurrent();
+   
+   // 1) EMA Cross
+   bool emaB=false, emaS=false;
+   if(GetEMACrossSignal(emaB, emaS)) {
+      if(InpVerboseLogs) PrintFormat("[PERSISTENT] EMA signals: BUY=%s, SELL=%s", emaB?"true":"false", emaS?"true":"false");
+      if(emaB && !gEMACrossBuy) {
+         gEMACrossBuy = true;
+         gEMACrossBuyTime = current;
+         Print("[PERSISTENT] EMA Cross BUY activé");
+      }
+      if(emaS && !gEMACrossSell) {
+         gEMACrossSell = true;
+         gEMACrossSellTime = current;
+         Print("[PERSISTENT] EMA Cross SELL activé");
+      }
+   } else {
+      if(InpVerboseLogs) Print("[PERSISTENT] EMA Cross: Pas de signal détecté");
+   }
+   
+   // 2) MACD Histogram
+   bool mhB=false, mhS=false;
+   if(GetMACD_HistSignal(mhB, mhS)) {
+      if(InpVerboseLogs) PrintFormat("[PERSISTENT] MACD Hist signals: BUY=%s, SELL=%s", mhB?"true":"false", mhS?"true":"false");
+      if(mhB && !gMACDHistBuy) {
+         gMACDHistBuy = true;
+         gMACDHistBuyTime = current;
+         Print("[PERSISTENT] MACD Hist BUY activé");
+      }
+      if(mhS && !gMACDHistSell) {
+         gMACDHistSell = true;
+         gMACDHistSellTime = current;
+         Print("[PERSISTENT] MACD Hist SELL activé");
+      }
+   } else {
+      if(InpVerboseLogs) Print("[PERSISTENT] MACD Hist: Pas de signal détecté");
+   }
+   
+   // 3) MACD Cross
+   bool mcB=false, mcS=false;
+   if(GetMACD_CrossSignal(mcB, mcS)) {
+      if(InpVerboseLogs) PrintFormat("[PERSISTENT] MACD Cross signals: BUY=%s, SELL=%s", mcB?"true":"false", mcS?"true":"false");
+      if(mcB && !gMACDCrossBuy) {
+         gMACDCrossBuy = true;
+         gMACDCrossBuyTime = current;
+         Print("[PERSISTENT] MACD Cross BUY activé");
+      }
+      if(mcS && !gMACDCrossSell) {
+         gMACDCrossSell = true;
+         gMACDCrossSellTime = current;
+         Print("[PERSISTENT] MACD Cross SELL activé");
+      }
+   } else {
+      if(InpVerboseLogs) Print("[PERSISTENT] MACD Cross: Pas de signal détecté");
+   }
+}
+
+// Calcule le score persistant
+int GetPersistentScore(bool isBuy)
+{
+   int score = 0;
+   if(isBuy) {
+      if(gEMACrossBuy && IsConditionValid(gEMACrossBuyTime)) score++;
+      if(gMACDHistBuy && IsConditionValid(gMACDHistBuyTime)) score++;
+      if(gMACDCrossBuy && IsConditionValid(gMACDCrossBuyTime)) score++;
+   } else {
+      if(gEMACrossSell && IsConditionValid(gEMACrossSellTime)) score++;
+      if(gMACDHistSell && IsConditionValid(gMACDHistSellTime)) score++;
+      if(gMACDCrossSell && IsConditionValid(gMACDCrossSellTime)) score++;
+   }
+   return score;
+}
+
+// Reset toutes les conditions (après ouverture trade)
+void ResetAllConditions()
+{
+   gEMACrossBuy = false; gEMACrossBuyTime = 0;
+   gMACDHistBuy = false; gMACDHistBuyTime = 0;
+   gMACDCrossBuy = false; gMACDCrossBuyTime = 0;
+   
+   gEMACrossSell = false; gEMACrossSellTime = 0;
+   gMACDHistSell = false; gMACDHistSellTime = 0;
+   gMACDCrossSell = false; gMACDCrossSellTime = 0;
+   
+   if(InpVerboseLogs) Print("[PERSISTENT] Toutes les conditions resetées");
 }
 
 //------------------------ Signaux ----------------------
@@ -211,37 +362,52 @@ int TrendDir_SMMA50()
    return 0;
 }
 
-// EMA21/55 (croisement)
+// EMA21/55 (SIMPLIFIÉ POUR TEST - plus de signaux)
 bool GetEMACrossSignal(bool &buy,bool &sell)
 {
    buy=false; sell=false;
    double e21_1,e55_1,e21_2,e55_2;
    if(!GetEMAs(e21_1,e55_1,e21_2,e55_2)) return false;
-   buy  = (e21_2<=e55_2 && e21_1>e55_1);
-   sell = (e21_2>=e55_2 && e21_1<e55_1);
+   
+   // VERSION TEST: EMA21 au-dessus/en-dessous EMA55 (pas croisement)
+   buy  = (e21_1 > e55_1);   // EMA21 au-dessus EMA55
+   sell = (e21_1 < e55_1);   // EMA21 en-dessous EMA55
+   
+   if(InpVerboseLogs) PrintFormat("[EMA] e21=%.5f, e55=%.5f, buy=%s, sell=%s", 
+                                  e21_1, e55_1, buy?"true":"false", sell?"true":"false");
    return true;
 }
 
-// MACD (SMA-based existant) — croisement des lignes
+// MACD (SIMPLIFIÉ POUR TEST - plus de signaux)
 bool GetMACD_CrossSignal(bool &buy,bool &sell)
 {
    buy=false; sell=false;
    double m1,s1,m2,s2;
    if(!GetMACD_SMA(m1,s1,m2,s2)) return false;
-   buy  = (m2<=s2 && m1>s1);
-   sell = (m2>=s2 && m1<s1);
+   
+   // VERSION TEST: MACD au-dessus/en-dessous signal (pas croisement)
+   buy  = (m1 > s1);  // MACD au-dessus signal
+   sell = (m1 < s1);  // MACD en-dessous signal
+   
+   if(InpVerboseLogs) PrintFormat("[MACD] macd=%.5f, signal=%.5f, buy=%s, sell=%s", 
+                                  m1, s1, buy?"true":"false", sell?"true":"false");
    return true;
 }
 
-// MACD — histogramme (MAIN - SIGNAL)
+// MACD — histogramme (SIMPLIFIÉ POUR TEST)
 bool GetMACD_HistSignal(bool &buy,bool &sell)
 {
    buy=false; sell=false;
    double m1,s1,m2,s2;
    if(!GetMACD_SMA(m1,s1,m2,s2)) return false;
-   double hist = (m1 - s1);
-   buy  = (hist > 0.0);
-   sell = (hist < 0.0);
+   double hist_current = (m1 - s1);  // Histogramme actuel
+   
+   // VERSION TEST: Histogramme positif/négatif (pas croisement)
+   buy  = (hist_current > 0.0);  // Histogramme positif
+   sell = (hist_current < 0.0);  // Histogramme négatif
+   
+   if(InpVerboseLogs) PrintFormat("[MACD_HIST] hist=%.5f, buy=%s, sell=%s", 
+                                  hist_current, buy?"true":"false", sell?"true":"false");
    return true;
 }
 
@@ -321,42 +487,69 @@ double risk=riskMoney;
 //======================== Ouverture ========================
 void TryOpenTrade()
 {
-   if(!InEntryWindow()) return;
-   if(!CanOpenToday()) return;
+   PrintFormat("[DEBUG] TryOpenTrade appelé à %s", TimeToString(TimeCurrent()));
+   
+   if(!InEntryWindow()) {
+      PrintFormat("[DEBUG] Hors fenêtre trading (6h-15h)");
+      return;
+   }
+   if(!CanOpenToday()) {
+      PrintFormat("[DEBUG] Max trades/jour atteint (%d/%d)", tradesCountToday, InpMaxTradesPerDay);
+      return;
+   }
    
    // [ADDED] RSI Filter - bloque si conditions non respectées
-   if(!IsRSIFilterOK()) return;
+   if(!IsRSIFilterOK()) {
+      PrintFormat("[DEBUG] RSI Filter bloqué");
+      return;
+   }
 
-   // [CHANGED] Scoring 4 conditions (SMMA + EMA + MACD_hist + MACD_cross) + filtre SMMA directionnel
-int scoreBuy=0, scoreSell=0;
+   // [NEW] Système de conditions persistantes + filtres SMMA et RSI
+   
+   // Mise à jour des conditions persistantes
+   UpdatePersistentConditions();
+   
+   // Reset des conditions expirées
+   ResetExpiredConditions();
 
-// 1) SMMA50 H4 tendance
-int tdir = TrendDir_SMMA50(); // +1/-1/0
-if(InpUseSMMA50Trend){
-   if(tdir>0) scoreBuy++;
-   else if(tdir<0) scoreSell++;
-   else return; // neutre -> pas d'entrée
-}
+   // Filtre SMMA50 H4 tendance (pas de score)
+   int tdir = TrendDir_SMMA50(); // +1/-1/0
+   bool allowBuy  = (!InpUseSMMA50Trend || tdir>0);
+   bool allowSell = (!InpUseSMMA50Trend || tdir<0);
+   PrintFormat("[DEBUG] SMMA50 trend direction: %d, allowBuy=%s, allowSell=%s", 
+               tdir, allowBuy?"true":"false", allowSell?"true":"false");
+   
+   if(InpUseSMMA50Trend && tdir==0) {
+      PrintFormat("[DEBUG] SMMA50 neutre - pas d'entrée");
+      return; // neutre -> pas d'entrée
+   }
 
-// 2) EMA21/55 cross
-bool emaB=false, emaS=false; GetEMACrossSignal(emaB, emaS);
-if(emaB) scoreBuy++; if(emaS) scoreSell++;
+   // Calcul du score persistant
+   int scoreBuy = GetPersistentScore(true);
+   int scoreSell = GetPersistentScore(false);
+   
+   PrintFormat("[DEBUG] Score BUY=%d, SELL=%d (min requis=%d)", 
+               scoreBuy, scoreSell, InpMinConditions);
+   PrintFormat("[DEBUG] Conditions BUY: EMA=%s, MACD_Hist=%s, MACD_Cross=%s", 
+               (gEMACrossBuy && IsConditionValid(gEMACrossBuyTime))?"✓":"✗",
+               (gMACDHistBuy && IsConditionValid(gMACDHistBuyTime))?"✓":"✗", 
+               (gMACDCrossBuy && IsConditionValid(gMACDCrossBuyTime))?"✓":"✗");
+   PrintFormat("[DEBUG] Conditions SELL: EMA=%s, MACD_Hist=%s, MACD_Cross=%s", 
+               (gEMACrossSell && IsConditionValid(gEMACrossSellTime))?"✓":"✗",
+               (gMACDHistSell && IsConditionValid(gMACDHistSellTime))?"✓":"✗", 
+               (gMACDCrossSell && IsConditionValid(gMACDCrossSellTime))?"✓":"✗");
 
-// 3) MACD histogramme
-bool mhB=false, mhS=false; GetMACD_HistSignal(mhB, mhS);
-if(mhB) scoreBuy++; if(mhS) scoreSell++;
-
-// 4) MACD croisement lignes
-bool mcB=false, mcS=false; GetMACD_CrossSignal(mcB, mcS);
-if(mcB) scoreBuy++; if(mcS) scoreSell++;
-
-bool allowBuy  = (!InpUseSMMA50Trend || tdir>0);
-bool allowSell = (!InpUseSMMA50Trend || tdir<0);
-
-int dir=0;
-if(scoreBuy  >= InpMinConditions && allowBuy  && InpAllowBuys)  dir=+1;
-if(scoreSell >= InpMinConditions && allowSell && InpAllowSells && dir==0) dir=-1;
-if(dir==0) return;
+   int dir=0;
+   if(scoreBuy  >= InpMinConditions && allowBuy  && InpAllowBuys)  dir=+1;
+   if(scoreSell >= InpMinConditions && allowSell && InpAllowSells && dir==0) dir=-1;
+   
+   if(dir==0) {
+      PrintFormat("[DEBUG] Aucune direction valide - scoreBuy=%d, scoreSell=%d, minReq=%d", 
+                  scoreBuy, scoreSell, InpMinConditions);
+      return;
+   }
+   
+   PrintFormat("[DEBUG] Direction choisie: %s", (dir>0?"BUY":"SELL"));
 
    double entry=(dir>0)? SymbolInfoDouble(sym,SYMBOL_ASK):SymbolInfoDouble(sym,SYMBOL_BID);
    double sl; MakeSL_Init(dir,entry,sl);
@@ -373,9 +566,23 @@ double tpPrice = (dir>0 ? entry*(1.0 + InpTP_PercentOfPrice/100.0)
    Trade.SetDeviationInPoints(InpSlippagePoints);
    string cmt="BASE";
    if(UseLossStreakReduction && gLossStreak >= LossStreakTrigger) cmt="RISK-REDUCED";   // [ADDED]
+   PrintFormat("[DEBUG] Tentative ouverture %s: lots=%.2f, entry=%.5f, sl=%.5f, tp=%.5f", 
+               (dir>0?"BUY":"SELL"), lots, entry, sl, tpPrice);
+   
    bool ok=(dir>0)? Trade.Buy(lots,sym,entry,sl,tpPrice,cmt)
                   : Trade.Sell(lots,sym,entry,sl,tpPrice,cmt);
-   if(ok) MarkTradeOpened();
+   
+   if(ok) {
+      MarkTradeOpened();
+      ResetAllConditions(); // Reset après ouverture trade
+      PrintFormat("[SUCCESS] %s ouvert avec succès, conditions resetées", (dir>0?"BUY":"SELL"));
+   } else {
+      uint retcode = Trade.ResultRetcode();
+      string comment = Trade.ResultComment();
+      PrintFormat("[ERROR] Échec ouverture %s - Code: %d, Comment: %s", 
+                  (dir>0?"BUY":"SELL"), retcode, comment);
+      PrintFormat("[ERROR] LastError: %d", GetLastError());
+   }
 }
 
 //======================== Gestion BE =======================
@@ -444,8 +651,16 @@ void OnTick()
 
     ManageBreakEvenPercent(_Symbol);   // ou ManageBreakEvenPercent(sym);
    // BE en continu (seuil %)
-    if(!IsNewBar()) return;
-    TryOpenTrade();
+    
+    static datetime lastTryTime = 0;
+    datetime currentTime = TimeCurrent();
+    
+    // Essaie d'ouvrir des trades toutes les minutes au lieu de seulement sur nouvelle barre
+    if(currentTime - lastTryTime >= 60) {  // 60 secondes
+       lastTryTime = currentTime;
+       PrintFormat("[DEBUG] OnTick - Tentative TryOpenTrade à %s", TimeToString(currentTime));
+       TryOpenTrade();
+    }
 }
 
 

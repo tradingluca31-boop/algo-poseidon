@@ -1,9 +1,8 @@
 //+------------------------------------------------------------------+
-//|                                   TEST CLAUDE - Export CSV Fix   |
-//|  Version corrigée avec export CSV fonctionnel                    |
-//|  H1 – Entrées 6:00-15:00 (serveur)                               |
+//|                                   Poseidon_London_1H_fixedRisk   |
+//|  H1 – Entrées 7:00-14:00 (serveur)                               |
 //|  Signal: EMA21/55 OU MACD(SMA 20,45,15)                          |
-//|  Max 2 trades/jour, SL 0.35%, TP +500$                           |
+//|  Max 2 trades/jour, SL 0.25%, TP +500$                           |
 //|  BE (0$) dès profit >= 300$ OU move >= 3R                        |
 //|  Risque FIXE = InpRiskPercent (pas de palier / pas de séries)    |
 //+------------------------------------------------------------------+
@@ -25,7 +24,7 @@ input bool     InpUseMACD              = true;        // MACD SMA 20/45/15
 
 // --- MACD SMA config ---
 input int      InpMACD_Fast            = 20;          // SMA rapide
-input int      InpMACD_Slow            = 35;          // SMA lente
+input int      InpMACD_Slow            = 45;          // SMA lente
 input int      InpMACD_Signal          = 15;          // SMA du MACD
 
 // --- Risque / gestion (en %) ---
@@ -40,10 +39,10 @@ input bool   UseFixedRiskMoney = true;   // Utiliser un montant fixe (€) au li
 input double FixedRiskMoney     = 100.0; // Montant risqué par trade (ex: 100€)
 input double ReducedRiskMoney   = 50.0;  // Montant risqué sous série de pertes (ex: 50€)
 
-input double InpSL_PercentOfPrice  = 0.35;  // SL = % du prix d'entrée (ex: 0.25 => 0.25%)
-input double InpTP_PercentOfPrice  = 1.75;  // TP = % du prix d'entrée
-input double InpBE_TriggerPercent  = 1;  // Passer BE quand le prix a évolué de +0.70% depuis l'entrée
-input int    InpMaxTradesPerDay    = 4;
+input double InpSL_PercentOfPrice  = 0.25;  // SL = % du prix d'entrée (ex: 0.25 => 0.25%)
+input double InpTP_PercentOfPrice  = 1.25;  // TP = % du prix d'entrée
+input double InpBE_TriggerPercent  = 0.70;  // Passer BE quand le prix a évolué de +0.70% depuis l'entrée
+input int    InpMaxTradesPerDay    = 2;
 
 
 // --- Fenêtre d'ouverture ---
@@ -68,8 +67,8 @@ input bool InpRSIBlockEqual = true;                         // Bloquer si == aux
 
 
 //=== Month Filter Inputs START ===========================================
-input bool InpTrade_Janvier   = true;  // Trader en Janvier
-input bool InpTrade_Fevrier   = true;  // Trader en Fevrier
+input bool InpTrade_Janvier   = false;  // Trader en Janvier
+input bool InpTrade_Fevrier   = false;  // Trader en Fevrier
 input bool InpTrade_Mars      = false;  // Trader en Mars
 input bool InpTrade_Avril     = true;   // Trader en Avril
 input bool InpTrade_Mai       = true;   // Trader en Mai
@@ -479,22 +478,12 @@ int OnInit()
 
 void OnDeinit(const int reason)
 {
-   Print("🛑 === OnDeinit appelé - Raison: ", reason, " ===");
-   
-   // BACKUP: Export aussi dans OnDeinit au cas où OnTesterDeinit ne marche pas
-   if(MQLInfoInteger(MQL_TESTER)) {
-      Print("🚀 OnDeinit: Mode testeur détecté - Lancement export de sauvegarde");
-      ExportTradeHistoryCSV();
-   }
-   
    if(hEMA21  !=INVALID_HANDLE) IndicatorRelease(hEMA21);
    if(hEMA55  !=INVALID_HANDLE) IndicatorRelease(hEMA55);
    if(hSMAfast!=INVALID_HANDLE) IndicatorRelease(hSMAfast);
    if(hSMAslow!=INVALID_HANDLE) IndicatorRelease(hSMAslow);
-   if(hSMMA50 !=INVALID_HANDLE) IndicatorRelease(hSMMA50);
-   if(rsi_handle!=INVALID_HANDLE) IndicatorRelease(rsi_handle);
-   
-   Print("✅ OnDeinit: Handles libérés");
+   if(hSMMA50 !=INVALID_HANDLE) IndicatorRelease(hSMMA50);   // [ADDED]
+   if(rsi_handle!=INVALID_HANDLE) IndicatorRelease(rsi_handle);   // [ADDED] RSI
 }
 
 
@@ -612,104 +601,4 @@ string MonthToString(int month)
       case 12: return "Decembre";
       default: return "Inconnu";
    }
-}
-
-//======================== [ADDED] Export CSV Functions - CLAUDE FIX ========================
-void ExportTradeHistoryCSV()
-{
-   Print("=== DÉBUT EXPORT CSV TRADES - VERSION CLAUDE ===");
-   
-   string file_name = StringSubstr(sym, 0, 6) + "_TEST_CLAUDE_" + TimeToString(TimeCurrent(), TIME_DATE) + ".csv";
-   
-   // Priorité 1: FILE_COMMON (accessible dans MQL5/Files/Common/)
-   int file_handle = FileOpen(file_name, FILE_WRITE | FILE_CSV | FILE_ANSI | FILE_COMMON, 0, CP_UTF8);
-   if(file_handle == INVALID_HANDLE)
-   {
-      Print("Échec FILE_COMMON, essai sans FILE_COMMON");
-      // Priorité 2: Sans FILE_COMMON (Tester/Files/)
-      file_handle = FileOpen(file_name, FILE_WRITE | FILE_CSV | FILE_ANSI, 0, CP_UTF8);
-   }
-   
-   if(file_handle == INVALID_HANDLE)
-   {
-      Print("ERREUR CRITIQUE: Impossible de créer le fichier CSV. Erreur: ", GetLastError());
-      return;
-   }
-   
-   Print("✅ Fichier CSV ouvert avec succès: ", file_name);
-   
-   // En-têtes CSV
-   FileWrite(file_handle, "magic,symbol,type,time_open,time_close,price_open,price_close,profit,volume,swap,commission,comment");
-   
-   datetime startDate = D'2020.01.01';
-   datetime endDate = TimeCurrent() + 86400;
-   
-   if(HistorySelect(startDate, endDate))
-   {
-      Print("✅ Historique sélectionné avec succès");
-      int total_deals = HistoryDealsTotal();
-      Print("📊 Nombre total de deals: ", total_deals);
-      
-      int exported_count = 0;
-      
-      for(int i = 0; i < total_deals; i++)
-      {
-         ulong ticket = HistoryDealGetTicket(i);
-         if(ticket == 0) continue;
-         
-         long deal_magic = HistoryDealGetInteger(ticket, DEAL_MAGIC);
-         if(deal_magic != InpMagic) continue; // Filtrer par magic number
-         
-         // Exporter seulement les deals de sortie (fermeture de position)
-         if(HistoryDealGetInteger(ticket, DEAL_ENTRY) == DEAL_ENTRY_OUT)
-         {
-            string deal_symbol = HistoryDealGetString(ticket, DEAL_SYMBOL);
-            long deal_type = HistoryDealGetInteger(ticket, DEAL_TYPE);
-            long deal_time = HistoryDealGetInteger(ticket, DEAL_TIME);
-            double deal_price = HistoryDealGetDouble(ticket, DEAL_PRICE);
-            double deal_profit = HistoryDealGetDouble(ticket, DEAL_PROFIT);
-            double deal_volume = HistoryDealGetDouble(ticket, DEAL_VOLUME);
-            double deal_swap = HistoryDealGetDouble(ticket, DEAL_SWAP);
-            double deal_commission = HistoryDealGetDouble(ticket, DEAL_COMMISSION);
-            string deal_comment = HistoryDealGetString(ticket, DEAL_COMMENT);
-            
-            // Formatage CSV avec toutes les données importantes
-            string csv_line = IntegerToString(deal_magic) + "," +
-                             deal_symbol + "," +
-                             IntegerToString(deal_type) + "," +
-                             IntegerToString(deal_time) + "," +
-                             IntegerToString(deal_time) + "," +
-                             DoubleToString(deal_price, 5) + "," +
-                             DoubleToString(deal_price, 5) + "," +
-                             DoubleToString(deal_profit, 2) + "," +
-                             DoubleToString(deal_volume, 2) + "," +
-                             DoubleToString(deal_swap, 2) + "," +
-                             DoubleToString(deal_commission, 2) + "," +
-                             deal_comment;
-            
-            FileWrite(file_handle, csv_line);
-            exported_count++;
-         }
-      }
-      
-      Print("🎯 Nombre de trades exportés: ", exported_count);
-   }
-   else
-   {
-      Print("❌ ERREUR: Impossible de sélectionner l'historique. Erreur: ", GetLastError());
-   }
-   
-   FileFlush(file_handle); // Force l'écriture sur disque
-   FileClose(file_handle);
-   Print("✅ Fichier CSV fermé avec succès");
-   Print("📁 Localisation: MQL5/Files/Common/ ou Tester/Files/");
-   Print("=== FIN EXPORT CSV TRADES - VERSION CLAUDE ===");
-}
-
-//======================== [ADDED] OnTesterDeinit - CLAUDE FIX ========================
-void OnTesterDeinit()
-{
-   Print("🚀 === OnTesterDeinit appelé - Export automatique CLAUDE ===");
-   ExportTradeHistoryCSV();
-   Print("🏁 === Fin OnTesterDeinit CLAUDE ===");
 }

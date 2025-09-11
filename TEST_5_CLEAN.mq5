@@ -822,10 +822,45 @@ void LogTradeToCSV(string type, double lots, double price, double sl, double tp)
       FileSeek(fileHandle, 0, SEEK_END);
       MqlDateTime dt;
       TimeToStruct(TimeCurrent(), dt);
-      string dateStr = StringFormat("%04d.%02d.%02d", dt.year, dt.mon, dt.day);
+      string dateStr = StringFormat("%04d-%02d-%02d", dt.year, dt.mon, dt.day);
       string timeStr = StringFormat("%02d:%02d:%02d", dt.hour, dt.min, dt.sec);
       
-      FileWrite(fileHandle, dateStr, timeStr, type, lots, price, sl, tp, "En cours");
+      FileWrite(fileHandle, dateStr, timeStr, type, lots, price, sl, tp, "En_cours");
       FileClose(fileHandle);
    }
 }
+
+//+------------------------------------------------------------------+
+//|                  GESTION DES RÉSULTATS DE TRADES                 |
+//+------------------------------------------------------------------+
+void OnTradeTransaction(const MqlTradeTransaction& trans,
+                       const MqlTradeRequest& request,
+                       const MqlTradeResult& result)
+{
+   if(trans.type == TRADE_TRANSACTION_DEAL_ADD)
+   {
+      ulong dealTicket = trans.deal;
+      if(HistoryDealSelect(dealTicket))
+      {
+         double profit = HistoryDealGetDouble(dealTicket, DEAL_PROFIT);
+         
+         // === GESTION SÉRIE DE PERTES ===
+         if(profit < 0)
+            consecutiveLosses++;
+         else
+            consecutiveLosses = 0; // Réinitialiser après un gain
+         
+         if(EnableLogging)
+         {
+            Print("=== RÉSULTAT TRADE ===");
+            Print("Profit: ", profit, " | Pertes consécutives: ", consecutiveLosses);
+            if(consecutiveLosses >= LossStreakThreshold)
+               Print("ATTENTION: Seuil de pertes atteint - Risque réduit activé");
+         }
+      }
+   }
+}
+
+//+------------------------------------------------------------------+
+//|                            FIN DU CODE                           |
+//+------------------------------------------------------------------+
