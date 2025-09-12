@@ -635,9 +635,8 @@ bool IsSentimentFilterOK(int direction)
       return true; // En cas d'erreur, on laisse passer
    }
    
-   // Zone neutre 50-70% : pas de contrainte
-   if(sentiment_long_pct >= 50.0 && sentiment_long_pct <= InpSentimentThreshold && 
-      sentiment_short_pct >= 50.0 && sentiment_short_pct <= InpSentimentThreshold) {
+   // Zone neutre 50-70% : aucune majorité forte
+   if(sentiment_long_pct <= InpSentimentThreshold && sentiment_short_pct <= InpSentimentThreshold) {
       if(InpVerboseLogs) PrintFormat("[Sentiment] Zone neutre - Long: %.1f%%, Short: %.1f%% - OK", 
                                     sentiment_long_pct, sentiment_short_pct);
       return true;
