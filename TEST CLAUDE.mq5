@@ -20,7 +20,7 @@ input bool     InpAllowSells           = true;
 // --- 3 Signaux indépendants ---
 input bool     InpUseEMA_Cross         = true;        // EMA21/55 croisement
 input bool     InpUseMACD              = true;        // MACD histogramme
-input bool     InpUseSMMA_Cross        = true;        // SMMA50 direction H1
+input bool     InpUseSMMA_Cross        = true;        // SMMA50/200 croisement H1
 input int      InpMinSignalsRequired   = 2;           // Signaux minimum requis (1, 2 ou 3)
 
 // --- MACD SMA config ---
@@ -220,7 +220,7 @@ bool GetMACD_HistSignal(bool &buy,bool &sell)
    return true;
 }
 
-// SMMA50/200 croisement H1 - on suit la SMMA50  
+// SMMA50/200 croisement H1 - signal basé sur le croisement des moyennes
 bool GetSMMA50_DirectionH1(bool &buy, bool &sell)
 {
    buy = false; sell = false;
@@ -232,7 +232,7 @@ bool GetSMMA50_DirectionH1(bool &buy, bool &sell)
    if(CopyBuffer(hSMMA50_Signal, 0, 0, 2, smma50) < 2) return false;
    if(CopyBuffer(hSMMA200_Signal, 0, 0, 2, smma200) < 2) return false;
    
-   // Signal persistant : SMMA50 > SMMA200 = BUY, SMMA50 < SMMA200 = SELL
+   // Croisement persistant : SMMA50 > SMMA200 = BUY, SMMA50 < SMMA200 = SELL
    buy = (smma50[0] > smma200[0]);
    sell = (smma50[0] < smma200[0]);
    
@@ -336,7 +336,7 @@ void TryOpenTrade()
    if(macdB) scoreBuy++;
    if(macdS) scoreSell++;
 
-   // SIGNAL 3) SMMA50 direction H1 (persistant) - on suit la SMMA50
+   // SIGNAL 3) SMMA50/200 croisement H1 (persistant)
    bool smmaB=false, smmaS=false; 
    GetSMMA50_DirectionH1(smmaB, smmaS);
    if(smmaB) scoreBuy++; 
