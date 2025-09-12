@@ -613,7 +613,8 @@ bool UpdateSentimentData()
    
    // Simulation des données Myfxbook XAUUSD (en production, utiliser WebRequest vers API Myfxbook)
    // Pour l'instant, simulation avec des valeurs aléaoires réalistes
-   double randomSeed = MathRandom() / 32767.0; // Valeur entre 0 et 1
+   MathSrand(GetTickCount()); // Initialiser le générateur
+   double randomSeed = MathRand() / 32767.0; // Valeur entre 0 et 1
    sentiment_long_pct = 30.0 + (randomSeed * 50.0); // Entre 30% et 80%
    sentiment_short_pct = 100.0 - sentiment_long_pct;
    sentiment_last_update = currentTime;
