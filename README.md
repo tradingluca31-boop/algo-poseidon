@@ -1,6 +1,6 @@
-# ZEUS USD Algorithm
+# ZEUS USD Algorithm - COMPLETE VERSION
 
-🚀 **Algorithme de trading spécialement conçu pour les paires USD majeures**
+🚀 **Algorithme de trading avancé spécialement conçu pour les paires USD majeures**
 
 ## 📊 **Caractéristiques Principales**
 
@@ -13,72 +13,89 @@
 - NZD/USD
 - USD/CAD
 
-### 🧠 **Logique de Trading**
-- **Base Poseidon** : Reprend la logique exacte du célèbre algorithme Poseidon
-- **EMA 21/55** : Croisements de moyennes mobiles exponentielles
-- **MACD SMA** : MACD personnalisé avec SMA (20, 45, 15)
-- **Mode combiné** : EMA OU MACD pour maximiser les opportunités
+### 🧠 **Logique de Trading Avancée**
+- **Base Poseidon EXACTE** : Reprend TOUS les paramètres du code Poseidon original
+- **3 Signaux indépendants** : EMA 21/55 + MACD Histogramme + SMMA 50/200 H1
+- **Scoring 2/3** : Minimum 2 signaux sur 3 requis pour ouvrir position
+- **MACD SMA personnalisé** : SMA (20, 35, 15) comme Poseidon
 
-### 📈 **Sentiment Retail (Innovation)**
-- **Filtre contrarian** : Utilise le sentiment retail pour optimiser les entrées
-- **Seuil 65%** : Signal quand retail >65% dans une direction
-- **Mise à jour 4h** : Actualisation automatique du sentiment
-- **Export CSV** : Données sentiment incluses pour analyse
+### 📈 **Filtres Avancés**
+- **RSI H4** : Filtre RSI (14, 70, 25) pour éviter zones extrêmes
+- **SMMA50 H4** : Filtre de tendance principal
+- **Sentiment Retail** : Seuil 80% pour éviter positions retail majoritaires
+- **Filtre mensuel** : Trading désactivé en Mars selon config Poseidon
 
 ### ⏰ **Sessions de Trading**
-- **Londres** : 7h-14h GMT (session principale)
-- **Logique Poseidon** : Respecte exactement les horaires originaux
-- **Max 2 trades/jour** : Limite pour éviter l'over-trading
+- **Session étendue** : 6h-15h GMT (9 heures de trading)
+- **Max 4 trades/jour** : Limite optimisée pour multi-paires
+- **Timeframe H1** : Signaux calculés sur bougies H1
 
-### 🎯 **Gestion du Risque**
-- **Risque fixe** : 1% du capital par trade
-- **SL adaptatif** : 0.25% du prix d'entrée (ajusté par volatilité)
-- **TP optimisé** : 1.25% du prix d'entrée
-- **Break-even** : +0.70% ou 3R (logique Poseidon exacte)
+### 🎯 **Gestion du Risque Avancée**
+- **Risque fixe** : 100€ par trade (montant fixe, pas %)
+- **Réduction série de pertes** : 50€ après 7 pertes consécutives
+- **SL optimisé** : 0.35% du prix d'entrée
+- **TP optimisé** : 1.75% du prix d'entrée
+- **Break-even** : +1.0% ou 3R (protection renforcée)
 
 ## 📁 **Fichiers**
 
-### **ZEUS_USD_V2_POSEIDON_LOGIC.mq5**
-Version complète avec :
-- ✅ Logique Poseidon exacte
-- ✅ Sentiment retail contrarian
-- ✅ Multi-paires USD (7 paires)
-- ✅ Export CSV complet
-- ✅ Gestion break-even avancée
+### **ZEUS_USD_V2_COMPLETE.mq5** ⭐ **RECOMMANDÉ**
+Version COMPLETE avec TOUS les paramètres Poseidon :
+- ✅ 3 Signaux indépendants (scoring 2/3)
+- ✅ RSI H4 + SMMA50 H4 + Sentiment Retail 80%
+- ✅ Risque fixe 100€ + réduction série pertes
+- ✅ Multi-paires USD optimisées (7 paires)
+- ✅ Filtre mensuel (Mars désactivé)
+- ✅ Export CSV complet avec sentiment
 
-### **ZEUS_V2_POSEIDON_RETAIL.set**
-Paramètres optimisés :
-- ✅ Configuration testée et validée
-- ✅ Sentiment retail activé (seuil 65%)
-- ✅ Toutes les paires USD activées
-- ✅ Sessions Londres (7h-14h)
+### **ZEUS_COMPLETE_EXACT_PARAMS.set** ⭐ **RECOMMANDÉ**
+Paramètres EXACTS du code Poseidon original :
+- ✅ Sessions 6h-15h GMT
+- ✅ SL 0.35% / TP 1.75% / BE 1.0%
+- ✅ Max 4 trades/jour
+- ✅ RSI (14, 70, 25) sur H4
+- ✅ Sentiment retail seuil 80%
+- ✅ MACD SMA (20, 35, 15)
 
-## 🚀 **Installation**
+### **ZEUS_USD_V2_POSEIDON_LOGIC.mq5** (Version simplifiée)
+Version basique avec logique Poseidon de base
 
-1. **Copier** `ZEUS_USD_V2_POSEIDON_LOGIC.mq5` dans `/MQL5/Experts/`
-2. **Copier** `ZEUS_V2_POSEIDON_RETAIL.set` dans `/MQL5/Presets/`
+### **ZEUS_V2_POSEIDON_RETAIL.set** (Configuration basique)
+Paramètres simplifiés pour version de base
+
+## 🚀 **Installation** (Version COMPLETE recommandée)
+
+1. **Copier** `ZEUS_USD_V2_COMPLETE.mq5` dans `/MQL5/Experts/`
+2. **Copier** `ZEUS_COMPLETE_EXACT_PARAMS.set` dans `/MQL5/Presets/`
 3. **Compiler** l'Expert Advisor dans MetaEditor
 4. **Charger** le preset dans MT5
-5. **Activer** l'algorithme sur un graphique H1
+5. **Activer** l'algorithme sur un graphique H1 (n'importe quelle paire USD)
 
 ## ⚙️ **Configuration Recommandée**
 
-### **Timeframe**
+### **Timeframe et Signaux**
 - **H1** : Graphique 1 heure (obligatoire)
-- **Signaux** : Calculés sur H1
-- **Entrées** : Uniquement sur nouvelles barres H1
+- **Signaux EMA/MACD** : Calculés sur H1
+- **RSI** : Calculé sur H4 (filtre)
+- **SMMA50** : Calculé sur H4 (tendance)
+- **SMMA50/200** : Calculé sur H1 (signal)
 
-### **Paires**
-- **EURUSD** : Volatilité normale (facteur 1.0)
-- **GBPUSD** : Volatilité élevée (facteur 1.2)
-- **USDJPY** : Volatilité réduite (facteur 0.8)
-- **USDCHF** : Stable (facteur 0.9)
-- **AUDUSD/NZDUSD** : Normales (facteur 1.0)
-- **USDCAD** : Stable (facteur 0.9)
+### **Sessions Multi-Paires**
+- **6h-15h GMT** : 9 heures de trading actif
+- **Multi-paires simultané** : Zeus trade automatiquement sur les 7 paires USD
+- **Max 4 trades/jour** : Répartis sur toutes les paires
+- **1 seul graphique** : Suffit pour toutes les paires
+
+### **Paramètres Critiques**
+- **Risque** : 100€ fixe par trade (réduction à 50€ après 7 pertes)
+- **SL/TP** : 0.35% / 1.75% (ratio 1:5)
+- **Break-even** : +1.0% ou 3R
+- **Scoring** : Minimum 2 signaux sur 3 requis
 
 ### **Broker**
-- **Spread faible** : <2 pips sur majors
+- **Spread faible** : <2 pips sur USD majors
 - **Exécution rapide** : <50ms
+- **Multi-paires** : Accès aux 7 paires USD
 - **Pas de restrictions** : Scalping autorisé
 
 ## 📊 **Monitoring**
