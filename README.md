@@ -39,6 +39,14 @@
 
 ## 📁 **Fichiers**
 
+### **ZEUS_V1_MULTI_CURRENCY.mq5** 🆕 **NOUVEAU**
+Version multi-devises avec 24 paires et contrôles ON/OFF :
+- ✅ 7 paires USD + 17 paires croisées
+- ✅ Contrôles ON/OFF individuels pour chaque paire
+- ✅ Structure adaptée pour USD et cross pairs
+- ✅ Logique de trading unifiée
+- ✅ Support EURJPY, GBPJPY, EURGBP, AUDCAD, etc.
+
 ### **ZEUS_USD_V2_COMPLETE.mq5** ⭐ **RECOMMANDÉ**
 Version COMPLETE avec TOUS les paramètres Poseidon :
 - ✅ 3 Signaux indépendants (scoring 2/3)
@@ -62,6 +70,18 @@ Version basique avec logique Poseidon de base
 
 ### **ZEUS_V2_POSEIDON_RETAIL.set** (Configuration basique)
 Paramètres simplifiés pour version de base
+
+## 💱 **Paires Supportées** (ZEUS_V1_MULTI_CURRENCY)
+
+### **Paires USD (7) :**
+- EUR/USD, GBP/USD, USD/JPY, USD/CHF
+- AUD/USD, NZD/USD, USD/CAD
+
+### **Paires Croisées (17) :**
+- **JPY Cross :** EUR/JPY, GBP/JPY, CAD/JPY, CHF/JPY
+- **EUR Cross :** EUR/GBP, EUR/CHF, EUR/AUD, EUR/NZD
+- **GBP Cross :** GBP/CHF, GBP/AUD, GBP/NZD
+- **Commodity Cross :** AUD/CAD, AUD/NZD, AUD/CHF, NZD/CAD, NZD/CHF, CAD/CHF
 
 ## 🚀 **Installation** (Version COMPLETE recommandée)
 
