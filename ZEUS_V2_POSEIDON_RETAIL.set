@@ -1,0 +1,57 @@
+; ZEUS USD V2 - Configuration avec logique Poseidon + Sentiment Retail
+; Paramètres optimisés pour les 7 paires USD majeures
+
+InpMagic=20250930
+InpAllowBuys=true
+InpAllowSells=true
+
+; Export CSV
+InpAutoExportOnDeinit=true
+InpExportStartDate=2020.01.01 00:00:00
+InpExportEndDate=2025.12.31 23:59:59
+InpFileSuffix=ZEUS_V2_RETAIL
+
+; Sélection des paires USD (toutes activées)
+InpTrade_EURUSD=true
+InpTrade_GBPUSD=true
+InpTrade_USDJPY=true
+InpTrade_USDCHF=true
+InpTrade_AUDUSD=true
+InpTrade_NZDUSD=true
+InpTrade_USDCAD=true
+
+; SENTIMENT RETAIL (nouveau)
+InpUseRetailSentiment=true
+InpRetailThreshold=65.0
+InpInvertRetailSignal=true
+InpRetailUpdateHours=4
+
+; Signaux technique (logique Poseidon exacte)
+InpSignalMode=0
+InpUseEMA_Cross=true
+InpUseMACD=true
+
+; MACD SMA config (paramètres Poseidon)
+InpMACD_Fast=20
+InpMACD_Slow=45
+InpMACD_Signal=15
+
+; Gestion du risque (logique Poseidon)
+InpRiskPercent=1.0
+InpSL_PercentOfPrice=0.25
+InpTP_PercentOfPrice=1.25
+InpBE_TriggerPercent=0.70
+InpMaxTradesPerDay=2
+
+; Sessions de trading (Poseidon 7h-14h)
+InpSignalTF=16385
+InpSessionStartHour=7
+InpSessionEndHour=14
+InpSlippagePoints=20
+InpVerboseLogs=true
+
+; Paramètres spécifiques USD
+InpAdaptSLForVolatility=true
+InpVolatilityMultiplier=1.5
+InpUseCorrelationFilter=true
+InpMaxCorrelation=0.8

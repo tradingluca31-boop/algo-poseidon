@@ -1,0 +1,88 @@
+; ZEUS USD Specialist - Configuration optimisée
+; Paramètres recommandés pour les paires USD majeures
+
+InpMagic=20250930
+InpAllowBuys=true
+InpAllowSells=true
+
+; Export CSV
+InpAutoExportOnDeinit=true
+InpExportStartDate=2020.01.01 00:00:00
+InpExportEndDate=2025.12.31 23:59:59
+InpFileSuffix=ZEUS_OPTIMIZED
+
+; Sélection des paires USD (toutes activées par défaut)
+InpTrade_EURUSD=true
+InpTrade_GBPUSD=true
+InpTrade_USDJPY=true
+InpTrade_USDCHF=true
+InpTrade_AUDUSD=true
+InpTrade_NZDUSD=true
+InpTrade_USDCAD=true
+
+; Filtre DXY activé pour meilleure corrélation USD
+InpUseDXYFilter=true
+InpDXY_EMA_Fast=12
+InpDXY_EMA_Slow=26
+InpDXY_TF=16385
+
+; Stratégie hybride EMA + MACD
+InpSignalMode=0
+InpEMA_Fast=21
+InpEMA_Slow=55
+InpMACD_Fast=12
+InpMACD_Slow=26
+InpMACD_Signal=9
+
+; Gestion du risque par paire optimisée
+InpRiskPercentBase=1.0
+InpRiskMultiplier_EUR=1.2
+InpRiskMultiplier_GBP=1.1
+InpRiskMultiplier_JPY=0.8
+InpRiskMultiplier_CHF=0.9
+InpRiskMultiplier_AUD=1.0
+InpRiskMultiplier_NZD=1.0
+InpRiskMultiplier_CAD=0.9
+
+; Stop Loss optimisés par paire
+InpSL_EUR=0.30
+InpSL_GBP=0.35
+InpSL_JPY=0.25
+InpSL_CHF=0.25
+InpSL_AUD=0.30
+InpSL_NZD=0.30
+InpSL_CAD=0.25
+
+; Take Profit optimisés par paire
+InpTP_EUR=1.50
+InpTP_GBP=1.75
+InpTP_JPY=1.25
+InpTP_CHF=1.25
+InpTP_AUD=1.50
+InpTP_NZD=1.50
+InpTP_CAD=1.25
+
+; Sessions de trading (Londres + New York)
+InpTrade_London=true
+InpTrade_NewYork=true
+InpTrade_Asian=false
+InpLondon_Start=8
+InpLondon_End=16
+InpNewYork_Start=13
+InpNewYork_End=21
+InpAsian_Start=23
+InpAsian_End=7
+
+; Filtre économique
+InpAvoidNews=true
+InpNewsAvoidHours=2
+InpTradeFOMC=false
+InpTradeNFP=false
+
+; Limites de trading
+InpMaxTradesPerDay=3
+InpMaxTradesPerPair=1
+InpBE_TriggerPercent=0.60
+InpSlippagePoints=30
+InpVerboseLogs=true
+InpSignalTF=16385
