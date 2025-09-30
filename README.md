@@ -39,13 +39,15 @@
 
 ## 📁 **Fichiers**
 
-### **ZEUS_V1_MULTI_CURRENCY.mq5** 🆕 **NOUVEAU**
-Version multi-devises avec 24 paires et contrôles ON/OFF :
-- ✅ 7 paires USD + 17 paires croisées
-- ✅ Contrôles ON/OFF individuels pour chaque paire
-- ✅ Structure adaptée pour USD et cross pairs
-- ✅ Logique de trading unifiée
-- ✅ Support EURJPY, GBPJPY, EURGBP, AUDCAD, etc.
+### **ZEUS_V1_MULTI_CURRENCY.mq5** 🚀 **AVANCÉ** - **VERSION RECOMMANDÉE**
+Version multi-devises avec contrôles d'exposition et calculateur avancé :
+- ✅ **24 paires** : 7 USD + 17 cross avec contrôles ON/OFF individuels
+- ✅ **Calculateur de position externe** : Support Myfxbook et autres calculateurs
+- ✅ **Contrôle d'exposition** : Anti-conflit positions opposées (ex: EURUSD long ≠ GBPUSD short)
+- ✅ **Gestion risque avancée** : Pas de double position même symbole
+- ✅ **Règle Break-Even** : 2ème position autorisée seulement si 1ère au BE
+- ✅ **Signal EMA15/40** : Avec priorité suivi EMA15 (plus réactif)
+- ✅ **Conversion automatique** : Calcul exact 100€ par trade selon devise compte
 
 ### **ZEUS_USD_V2_COMPLETE.mq5** ⭐ **RECOMMANDÉ**
 Version COMPLETE avec TOUS les paramètres Poseidon :
@@ -118,13 +120,41 @@ Paramètres simplifiés pour version de base
 - **Multi-paires** : Accès aux 7 paires USD
 - **Pas de restrictions** : Scalping autorisé
 
-## 📊 **Monitoring**
+## 🚀 **Fonctionnalités Avancées** (ZEUS_V1_MULTI_CURRENCY)
+
+### **🧮 Calculateur de Position Intelligent**
+- **Calcul par paire** : Prise en compte spécificités (GBPUSD ≠ USDJPY)
+- **Conversion automatique** : Devise compte → 100€ exact par trade
+- **Support externe** : Compatible Myfxbook Position Size Calculator
+- **Fallback interne** : Calcul avancé si externe indisponible
+
+### **🛡️ Contrôle d'Exposition Anti-Conflit**
+#### **Règles de Blocage** :
+1. **Positions opposées** : EURUSD long + GBPUSD short = BLOQUÉ
+2. **Double symbole** : 2 positions sur même paire = BLOQUÉ
+3. **Règle Break-Even** : 2ème position autorisée seulement si 1ère au BE
+
+#### **Exemples de Conflits Détectés** :
+```
+❌ EURUSD LONG + GBPUSD SHORT (USD commun, sens opposés)
+❌ GBPJPY LONG + GBPJPY LONG (même symbole)
+✅ EURUSD LONG + GBPUSD LONG (même sens USD, autorisé)
+✅ EURUSD LONG (BE) + EURJPY LONG (2ème position après BE)
+```
+
+### **📈 Signal EMA15/40 avec Priorité EMA15**
+- **Croisements** : EMA15 × EMA40 = signaux d'entrée
+- **Suivi tendance** : Prix > EMA15 montante = signal haussier
+- **Réactivité** : EMA15 prioritaire (plus réactive que EMA40)
+
+## 📊 **Monitoring Avancé**
 
 ### **Logs Détaillés**
 ```
-[RETAIL] Updated sentiment: EUR=67, GBP=72, JPY=58, CHF=51, AUD=63, NZD=65, CAD=49
-[ZEUS TRADE] EURUSD Dir=-1 Lots=0.50 Entry=1.0825 SL=1.0852 TP=1.0689 Retail=67
-[ZEUS BE] EURUSD entry=1.0825 price=1.0748 move=1.2R sl->1.0825 (%Trig=yes, 3R=no)
+[EXPOSURE] Blocked: Contradictory position GBPUSD SHORT vs existing EURUSD LONG
+[EXTERNAL CALC] GBPUSD: Risk=$100.00 Entry=1.2650 SL=1.2600 Distance=50 pips => LotSize=0.47
+[EMA15/40] EURUSD Signal: BUY (EMA15=1.0845 EMA40=1.0839 Price=1.0847)
+[ZEUS TRADE] EURUSD Dir=1 Lots=0.47 Entry=1.0847 SL=1.0812 TP=1.0937 Score=3/3
 ```
 
 ### **Export CSV**
