@@ -39,8 +39,16 @@
 
 ## 📁 **Fichiers**
 
-### **ZEUS_V1_MULTI_CURRENCY.mq5** 🚀 **AVANCÉ** - **VERSION RECOMMANDÉE**
-Version multi-devises avec contrôles d'exposition et calculateur avancé :
+### **ZEUS_V1_MULTI_CURRENCY_CORRECTED.mq5** 🔧 **CORRIGÉ** - **VERSION RECOMMANDÉE**
+Version corrigée avec bugs critiques résolus :
+- ✅ **Calculs corrigés** : Problème "résultats = 0.00" résolu
+- ✅ **Calculateur externe fixé** : LotsFromRisk intégration correcte
+- ✅ **Filtres optimisés** : Exposition désactivée par défaut (configurable)
+- ✅ **Logs activés** : Debugging détaillé pour troubleshooting
+- ✅ **24 paires fonctionnelles** : USD + Cross pairs opérationnelles
+
+### **ZEUS_V1_MULTI_CURRENCY.mq5** 🚀 **AVANCÉ** - Version avec fonctionnalités complètes
+Version multi-devises avec toutes les fonctionnalités avancées :
 - ✅ **24 paires** : 7 USD + 17 cross avec contrôles ON/OFF individuels
 - ✅ **Calculateur de position externe** : Support Myfxbook et autres calculateurs
 - ✅ **Contrôle d'exposition** : Anti-conflit positions opposées (ex: EURUSD long ≠ GBPUSD short)
@@ -119,6 +127,20 @@ Paramètres simplifiés pour version de base
 - **Exécution rapide** : <50ms
 - **Multi-paires** : Accès aux 7 paires USD
 - **Pas de restrictions** : Scalping autorisé
+
+## 🔧 **Corrections Critiques Apportées**
+
+### **Problèmes Résolus dans ZEUS_V1_MULTI_CURRENCY_CORRECTED.mq5**
+1. **Calculateur de position** : Logique LotsFromRisk corrigée (était cause principale résultats = 0.00)
+2. **Calculateur externe** : Fallback fixé pour retourner lot size au lieu de loss per lot
+3. **Filtres d'exposition** : Désactivés par défaut pour éviter blocage excessif
+4. **Signal EMA15/40** : Désactivé par défaut pour éviter interférence
+5. **Logs verbeux** : Activés par défaut pour faciliter diagnostic
+
+### **Utilisation Recommandée**
+- **Pour production** : Utilisez `ZEUS_V1_MULTI_CURRENCY_CORRECTED.mq5`
+- **Pour tests avancés** : Utilisez `ZEUS_V1_MULTI_CURRENCY.mq5` avec tous filtres
+- **Toujours vérifier** : Logs dans l'onglet "Expert" de MT5
 
 ## 🚀 **Fonctionnalités Avancées** (ZEUS_V1_MULTI_CURRENCY)
 
