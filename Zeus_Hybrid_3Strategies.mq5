@@ -188,11 +188,15 @@ void OnTick()
     //--- Daily reset
     CheckDailyReset();
 
-    //--- FTMO checks
-    if(!CheckFTMOLimits()) return;
-
-    //--- Update trailing stops for all positions
+    //--- TOUJOURS update trailing stops (même si daily loss atteint)
     UpdateAllTrailingStops();
+
+    //--- FTMO checks pour NOUVEAUX trades seulement
+    if(!CheckFTMOLimits())
+    {
+        if(InpVerboseLogs) Print("FTMO Limits atteintes - Pas de nouveaux trades, positions existantes maintenues");
+        return; // Bloque nouveaux trades mais trailing continue
+    }
 
     //--- Scan all symbols for trading opportunities
     for(int i = 0; i < ArraySize(g_Symbols); i++)
@@ -684,12 +688,12 @@ bool CheckFTMOLimits()
 {
     double balance = AccountInfoDouble(ACCOUNT_BALANCE);
 
-    //--- Daily loss check (calculé sur balance début journée) - LIMITE DURE
+    //--- Daily loss check (calculé sur balance début journée) - BLOQUE NOUVEAUX TRADES
     double dailyLossPercent = (g_DailyPnL / g_DailyStartBalance) * 100.0;
     if(dailyLossPercent <= -InpMaxDailyLoss)
     {
-        Print("FTMO STOP: DAILY LOSS LIMIT ATTEINT (", DoubleToString(dailyLossPercent, 2), "%)");
-        return false;
+        Print("⚠️ DAILY LOSS LIMIT ATTEINT (", DoubleToString(dailyLossPercent, 2), "%) - Nouveaux trades bloqués, positions existantes maintenues");
+        return false; // Bloque nouveaux trades, trailing continue
     }
 
     //--- Drawdown total monitoring (objectif < 8%, pas une limite)
