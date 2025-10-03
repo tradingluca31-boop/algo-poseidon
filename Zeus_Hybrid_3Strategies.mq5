@@ -86,9 +86,11 @@ input bool   InpML_Enabled = true;             // Activer ML tracking signaux
 input int    InpML_RecalibrationTrades = 100;  // Recalibrer tous les X trades
 
 input group "=== NEWS FILTER (Amélioration #10) ==="
-input bool   InpNews_Enabled = false;          // Activer filtre news (API requise)
+input bool   InpNews_Enabled = true;           // Activer filtre news (Myfxbook XML gratuit)
 input int    InpNews_PauseBeforeMinutes = 15;  // Pause avant news (minutes)
 input int    InpNews_PauseAfterMinutes = 30;   // Pause après news (minutes)
+input int    InpNews_MinImportance = 2;        // Importance min (1=Low, 2=Medium, 3=High)
+input int    InpNews_UpdateIntervalHours = 6;  // Update news cache (heures)
 
 input group "=== GENERAL SETTINGS ==="
 input int    InpMagicNumber = 789456;          // Magic Number
@@ -125,6 +127,16 @@ double g_SignalWeight[10];  // Poids adaptatifs
 //--- Amélioration #8: Correlation Matrix
 string g_OpenedCurrencies[];
 int g_CurrencyCount[];
+
+//--- Amélioration #10: News Cache
+struct NewsEvent {
+    datetime time;
+    string currency;
+    string title;
+    int importance;  // 1=Low, 2=Medium, 3=High
+};
+NewsEvent g_NewsEvents[];
+datetime g_NewsLastUpdate = 0;
 
 //--- Indicator handles
 int g_EMA_Handle[];
@@ -1128,7 +1140,11 @@ void UpdateEquityCurve(double profit)
     g_EquityCurveIndex = (g_EquityCurveIndex + 1) % InpEquityCurve_LookbackTrades;
 
     //--- Check if we have enough data
-    if(ArraySum(g_EquityCurve) == 0 && g_EquityCurveIndex < 5) return;
+    double sumCheck = 0;
+    for(int j = 0; j < InpEquityCurve_LookbackTrades; j++)
+        sumCheck += MathAbs(g_EquityCurve[j]);
+
+    if(sumCheck == 0 && g_EquityCurveIndex < 5) return;
 
     //--- Calculate slope (simple linear regression)
     double sumX = 0, sumY = 0, sumXY = 0, sumX2 = 0;
@@ -1259,41 +1275,150 @@ bool CheckCurrencyDiversification(string symbol)
 }
 
 //+------------------------------------------------------------------+
+//| AMÉLIORATION #10: Update News Cache (Myfxbook XML)              |
+//+------------------------------------------------------------------+
+void UpdateNewsCache()
+{
+    if(!InpNews_Enabled) return;
+
+    //--- Check if update needed
+    if(TimeCurrent() - g_NewsLastUpdate < InpNews_UpdateIntervalHours * 3600) return;
+
+    //--- Build Myfxbook XML URL
+    datetime now = TimeCurrent();
+    datetime tomorrow = now + 86400;
+
+    MqlDateTime dtNow, dtTomorrow;
+    TimeToStruct(now, dtNow);
+    TimeToStruct(tomorrow, dtTomorrow);
+
+    string startDate = StringFormat("%04d-%02d-%02d 00:00", dtNow.year, dtNow.mon, dtNow.day);
+    string endDate = StringFormat("%04d-%02d-%02d 23:59", dtTomorrow.year, dtTomorrow.mon, dtTomorrow.day);
+
+    // Filter: 2-3 = Medium-High importance, major currencies
+    string url = "http://www.myfxbook.com/calendar_statement.xml?start=" + startDate +
+                 "&end=" + endDate +
+                 "&filter=2-3_PEI-USD-EUR-GBP-JPY-CHF-AUD-NZD-CAD&calPeriod=10";
+
+    //--- Fetch XML (WebRequest nécessite URL dans liste autorisée)
+    char data[], result[];
+    string headers;
+    int timeout = 5000;
+
+    ResetLastError();
+    int res = WebRequest("GET", url, NULL, NULL, timeout, data, 0, result, headers);
+
+    if(res == -1)
+    {
+        int error = GetLastError();
+        if(error == 4060)
+        {
+            Print("⚠️ NEWS FILTER: Ajoutez 'www.myfxbook.com' dans Outils > Options > Expert Advisors > WebRequest");
+        }
+        else
+        {
+            Print("Erreur WebRequest News: ", error);
+        }
+        return;
+    }
+
+    //--- Parse XML response (simplifié - extraction basique)
+    string xmlResponse = CharArrayToString(result);
+
+    //--- Simple parsing: chercher <event> tags
+    ArrayResize(g_NewsEvents, 0);
+
+    int pos = 0;
+    while(true)
+    {
+        int eventStart = StringFind(xmlResponse, "<event>", pos);
+        if(eventStart == -1) break;
+
+        int eventEnd = StringFind(xmlResponse, "</event>", eventStart);
+        if(eventEnd == -1) break;
+
+        string eventBlock = StringSubstr(xmlResponse, eventStart, eventEnd - eventStart);
+
+        //--- Extract fields
+        NewsEvent evt;
+        evt.time = ExtractXMLDateTime(eventBlock);
+        evt.currency = ExtractXMLTag(eventBlock, "currencycode");
+        evt.title = ExtractXMLTag(eventBlock, "title");
+        evt.importance = (int)StringToInteger(ExtractXMLTag(eventBlock, "impact"));
+
+        if(evt.importance >= InpNews_MinImportance)
+        {
+            int size = ArraySize(g_NewsEvents);
+            ArrayResize(g_NewsEvents, size + 1);
+            g_NewsEvents[size] = evt;
+        }
+
+        pos = eventEnd;
+    }
+
+    g_NewsLastUpdate = TimeCurrent();
+
+    if(InpVerboseLogs)
+        Print("✅ NEWS CACHE: ", ArraySize(g_NewsEvents), " événements chargés (importance ≥", InpNews_MinImportance, ")");
+}
+
+//+------------------------------------------------------------------+
+//| Helper: Extract XML tag value                                   |
+//+------------------------------------------------------------------+
+string ExtractXMLTag(string xml, string tag)
+{
+    string openTag = "<" + tag + ">";
+    string closeTag = "</" + tag + ">";
+
+    int start = StringFind(xml, openTag);
+    if(start == -1) return "";
+
+    start += StringLen(openTag);
+    int end = StringFind(xml, closeTag, start);
+    if(end == -1) return "";
+
+    return StringSubstr(xml, start, end - start);
+}
+
+//+------------------------------------------------------------------+
+//| Helper: Extract datetime from XML                               |
+//+------------------------------------------------------------------+
+datetime ExtractXMLDateTime(string xml)
+{
+    string dateStr = ExtractXMLTag(xml, "date");
+    if(dateStr == "") return 0;
+
+    // Format: "2025-01-15 14:30:00"
+    return StringToTime(dateStr);
+}
+
+//+------------------------------------------------------------------+
 //| AMÉLIORATION #10: Check News Filter                             |
 //+------------------------------------------------------------------+
 bool CheckNewsFilter()
 {
     if(!InpNews_Enabled) return true;
 
-    //--- Get current calendar events from MT5
-    MqlCalendarValue values[];
-    MqlCalendarEvent events[];
+    //--- Update cache if needed
+    UpdateNewsCache();
 
-    datetime from = TimeCurrent();
-    datetime to = from + InpNews_PauseBeforeMinutes * 60;
+    //--- Check cached news events
+    datetime now = TimeCurrent();
 
-    if(CalendarValueHistory(values, from, to, NULL, NULL) > 0)
+    for(int i = 0; i < ArraySize(g_NewsEvents); i++)
     {
-        for(int i = 0; i < ArraySize(values); i++)
-        {
-            MqlCalendarEvent event;
-            if(CalendarEventById(values[i].event_id, event))
-            {
-                //--- Check if high impact news
-                if(event.importance == CALENDAR_IMPORTANCE_HIGH)
-                {
-                    datetime eventTime = values[i].time;
-                    datetime pauseBefore = eventTime - InpNews_PauseBeforeMinutes * 60;
-                    datetime pauseAfter = eventTime + InpNews_PauseAfterMinutes * 60;
+        datetime pauseBefore = g_NewsEvents[i].time - InpNews_PauseBeforeMinutes * 60;
+        datetime pauseAfter = g_NewsEvents[i].time + InpNews_PauseAfterMinutes * 60;
 
-                    if(TimeCurrent() >= pauseBefore && TimeCurrent() <= pauseAfter)
-                    {
-                        if(InpVerboseLogs)
-                            Print("Filtre NEWS: High impact news détecté (", event.name, ") - Pause");
-                        return false;
-                    }
-                }
+        if(now >= pauseBefore && now <= pauseAfter)
+        {
+            if(InpVerboseLogs)
+            {
+                Print("Filtre NEWS: ", g_NewsEvents[i].currency, " - ", g_NewsEvents[i].title,
+                      " (Importance:", g_NewsEvents[i].importance, ") à ",
+                      TimeToString(g_NewsEvents[i].time, TIME_DATE|TIME_MINUTES));
             }
+            return false;
         }
     }
 
