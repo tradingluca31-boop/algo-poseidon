@@ -5,7 +5,7 @@
 //| Stratégie 1: Daily Range Breakout (DRB)                          |
 //| Stratégie 2: Mean Reversion avec ATR                             |
 //| Stratégie 3: Adaptive Risk + Trailing Stop                       |
-//| Seuil: 70% des conditions doivent être remplies                  |
+//| Seuil: 7/10 signaux minimum requis                               |
 //+------------------------------------------------------------------+
 #property copyright "Zeus Trading System"
 #property version   "1.00"
@@ -153,7 +153,7 @@ int OnInit()
 
     Print("Initialisation réussie - Balance: ", g_InitialBalance);
     Print("Paires surveillées: ", ArraySize(g_Symbols));
-    Print("Seuil conditions: 70% (7/10 minimum)");
+    Print("Seuil validation: 7/10 signaux minimum");
 
     return INIT_SUCCEEDED;
 }
@@ -383,31 +383,29 @@ void AnalyzeSymbol(string symbol, int symbolIndex)
     if(close > rangeCenter) signalsBuy++;
     else if(close < rangeCenter) signalsSell++;
 
-    //--- EVALUATE 70% THRESHOLD
-    double buyRate = (double)signalsBuy / (double)signalsTotal;
-    double sellRate = (double)signalsSell / (double)signalsTotal;
+    //--- EVALUATE THRESHOLD (7/10 signaux minimum)
+    int minSignalsRequired = 7; // 7 signaux sur 10
 
     if(InpVerboseLogs)
     {
         Print("=== ", symbol, " === Signaux BUY: ", signalsBuy, "/", signalsTotal,
-              " (", DoubleToString(buyRate * 100, 1), "%) | SELL: ", signalsSell, "/", signalsTotal,
-              " (", DoubleToString(sellRate * 100, 1), "%)");
+              " | SELL: ", signalsSell, "/", signalsTotal);
     }
 
-    //--- Execute trade si >= 70% (7/10 signaux) avec position sizing adaptatif
-    if(buyRate >= 0.70)
+    //--- Execute trade si >= 7 signaux avec position sizing adaptatif
+    if(signalsBuy >= minSignalsRequired)
     {
-        Print(">>> SIGNAL BUY validé - ", symbol, " avec ", DoubleToString(buyRate * 100, 1), "% des signaux");
+        Print(">>> SIGNAL BUY validé - ", symbol, " avec ", signalsBuy, "/", signalsTotal, " signaux");
         OpenPosition(symbol, ORDER_TYPE_BUY, currentATR, close, atrAdaptiveMultiplier);
     }
-    else if(sellRate >= 0.70)
+    else if(signalsSell >= minSignalsRequired)
     {
-        Print(">>> SIGNAL SELL validé - ", symbol, " avec ", DoubleToString(sellRate * 100, 1), "% des signaux");
+        Print(">>> SIGNAL SELL validé - ", symbol, " avec ", signalsSell, "/", signalsTotal, " signaux");
         OpenPosition(symbol, ORDER_TYPE_SELL, currentATR, close, atrAdaptiveMultiplier);
     }
     else
     {
-        if(InpVerboseLogs) Print("Seuil 70% non atteint pour ", symbol);
+        if(InpVerboseLogs) Print("Seuil ", minSignalsRequired, "/", signalsTotal, " non atteint pour ", symbol);
     }
 }
 
