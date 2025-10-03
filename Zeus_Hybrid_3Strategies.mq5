@@ -57,6 +57,39 @@ input double InpMaxCorrelation = 0.80;         // Corrélation max autorisée
 input int    InpCorrelationPeriod = 100;       // Période calcul corrélation
 input ENUM_TIMEFRAMES InpCorrelationTF = PERIOD_H1; // Timeframe corrélation
 
+input group "=== VOLATILITY REGIME (Amélioration #1) ==="
+input bool   InpVolRegime_Enabled = true;      // Activer détection volatilité
+input int    InpVolRegime_Period = 100;        // Période calcul percentile ATR
+input double InpVolRegime_LowThreshold = 30.0; // Seuil Low (percentile)
+input double InpVolRegime_HighThreshold = 70.0;// Seuil High (percentile)
+input double InpVolRegime_ExtremeThreshold = 90.0; // Seuil Extreme (skip trades)
+
+input group "=== TIME-BASED FILTERS (Amélioration #2) ==="
+input bool   InpTimeFilter_Enabled = true;     // Activer filtres horaires
+input bool   InpTimeFilter_AvoidLunchTime = true; // Éviter 12h-14h (low volume)
+input bool   InpTimeFilter_AvoidAsianNight = true; // Éviter 22h-2h (flat)
+
+input group "=== EQUITY CURVE MONITORING (Amélioration #6) ==="
+input bool   InpEquityCurve_Enabled = true;    // Activer monitoring equity curve
+input int    InpEquityCurve_LookbackTrades = 20; // Trades pour calcul slope
+input int    InpEquityCurve_PauseDaysNegSlope = 3; // Pause si slope négatif (jours)
+input int    InpEquityCurve_PauseDaysLosingStreak = 1; // Pause si 10 pertes (jours)
+
+input group "=== MARKET REGIME ADX (Amélioration #7) ==="
+input bool   InpADX_Enabled = true;            // Activer détection ADX
+input int    InpADX_Period = 14;               // Période ADX
+input double InpADX_TrendingThreshold = 25.0;  // ADX > 25 = Trending
+input double InpADX_RangingThreshold = 20.0;   // ADX < 20 = Ranging
+
+input group "=== ML SIGNAL STRENGTH (Amélioration #9) ==="
+input bool   InpML_Enabled = true;             // Activer ML tracking signaux
+input int    InpML_RecalibrationTrades = 100;  // Recalibrer tous les X trades
+
+input group "=== NEWS FILTER (Amélioration #10) ==="
+input bool   InpNews_Enabled = false;          // Activer filtre news (API requise)
+input int    InpNews_PauseBeforeMinutes = 15;  // Pause avant news (minutes)
+input int    InpNews_PauseAfterMinutes = 30;   // Pause après news (minutes)
+
 input group "=== GENERAL SETTINGS ==="
 input int    InpMagicNumber = 789456;          // Magic Number
 input string InpTradeComment = "Zeus_Hybrid";  // Commentaire trades
@@ -79,11 +112,26 @@ double g_PeakBalance = 0.0;
 int g_ConsecutiveLosses = 0;
 int g_ConsecutiveWins = 0;
 
+//--- Amélioration #6: Equity Curve
+double g_EquityCurve[];
+int g_EquityCurveIndex = 0;
+datetime g_PauseUntilTime = 0;
+
+//--- Amélioration #9: ML Signal Strength
+int g_SignalCorrect[10];    // Compteur signaux corrects
+int g_SignalTotal[10];      // Compteur signaux totaux
+double g_SignalWeight[10];  // Poids adaptatifs
+
+//--- Amélioration #8: Correlation Matrix
+string g_OpenedCurrencies[];
+int g_CurrencyCount[];
+
 //--- Indicator handles
 int g_EMA_Handle[];
 int g_ATR_Handle[];
 int g_RSI_Handle[];
 int g_MACD_Handle[];
+int g_ADX_Handle[];  // Amélioration #7
 
 //--- Structures
 struct DailyRangeData {
@@ -123,7 +171,23 @@ int OnInit()
     ArrayResize(g_ATR_Handle, ArraySize(g_Symbols));
     ArrayResize(g_RSI_Handle, ArraySize(g_Symbols));
     ArrayResize(g_MACD_Handle, ArraySize(g_Symbols));
+    ArrayResize(g_ADX_Handle, ArraySize(g_Symbols));
     ArrayResize(g_DailyRange, ArraySize(g_Symbols));
+
+    //--- Initialize Equity Curve
+    if(InpEquityCurve_Enabled)
+    {
+        ArrayResize(g_EquityCurve, InpEquityCurve_LookbackTrades);
+        ArrayInitialize(g_EquityCurve, 0);
+    }
+
+    //--- Initialize ML Signal Weights
+    if(InpML_Enabled)
+    {
+        ArrayInitialize(g_SignalCorrect, 0);
+        ArrayInitialize(g_SignalTotal, 0);
+        ArrayInitialize(g_SignalWeight, 1.0); // Poids initial = 1.0
+    }
 
     //--- Create indicator handles for all symbols
     for(int i = 0; i < ArraySize(g_Symbols); i++)
@@ -132,9 +196,16 @@ int OnInit()
         g_ATR_Handle[i] = iATR(g_Symbols[i], PERIOD_CURRENT, InpMR_ATRPeriod);
         g_RSI_Handle[i] = iRSI(g_Symbols[i], PERIOD_CURRENT, InpRSI_Period, PRICE_CLOSE);
         g_MACD_Handle[i] = iMACD(g_Symbols[i], PERIOD_CURRENT, InpMACD_Fast, InpMACD_Slow, InpMACD_Signal, PRICE_CLOSE);
+        if(InpADX_Enabled)
+            g_ADX_Handle[i] = iADX(g_Symbols[i], PERIOD_CURRENT, InpADX_Period);
 
-        if(g_EMA_Handle[i] == INVALID_HANDLE || g_ATR_Handle[i] == INVALID_HANDLE ||
-           g_RSI_Handle[i] == INVALID_HANDLE || g_MACD_Handle[i] == INVALID_HANDLE)
+        bool handlesOK = (g_EMA_Handle[i] != INVALID_HANDLE && g_ATR_Handle[i] != INVALID_HANDLE &&
+                          g_RSI_Handle[i] != INVALID_HANDLE && g_MACD_Handle[i] != INVALID_HANDLE);
+
+        if(InpADX_Enabled)
+            handlesOK = handlesOK && (g_ADX_Handle[i] != INVALID_HANDLE);
+
+        if(!handlesOK)
         {
             Print("ERREUR: Impossible de créer les indicateurs pour ", g_Symbols[i]);
             return INIT_FAILED;
@@ -224,10 +295,25 @@ void AnalyzeSymbol(string symbol, int symbolIndex)
         return;
     }
 
+    //--- Filtre 2b: Time-Based Session Filter (Amélioration #2)
+    if(!CheckTimeFilter()) return;
+
+    //--- Filtre 2c: Equity Curve Pause (Amélioration #6)
+    if(!CheckEquityPause()) return;
+
+    //--- Filtre 2d: News Filter (Amélioration #10)
+    if(!CheckNewsFilter()) return;
+
     //--- Filtre 3: Corrélation
     if(!CheckCorrelationExposure(symbol))
     {
         if(InpVerboseLogs) Print("Filtre CORRELATION échoué: ", symbol);
+        return;
+    }
+
+    //--- Filtre 3b: Currency Diversification (Amélioration #8)
+    if(!CheckCurrencyDiversification(symbol))
+    {
         return;
     }
 
@@ -294,7 +380,18 @@ void AnalyzeSymbol(string symbol, int symbolIndex)
         return;
     }
 
-    if(InpVerboseLogs) Print(">>> ", symbol, " - TOUS FILTRES PASSÉS - Analyse signaux...");
+    //--- Amélioration #1: Volatility Regime Detection
+    string volRegime = CalculateVolatilityRegime(symbolIndex);
+    if(volRegime == "EXTREME")
+    {
+        if(InpVerboseLogs) Print("Filtre VOL REGIME: EXTREME (>90 percentile) - Skip trade");
+        return;
+    }
+
+    //--- Amélioration #7: Market Regime Detection (ADX)
+    string marketRegime = DetectMarketRegime(symbolIndex);
+
+    if(InpVerboseLogs) Print(">>> ", symbol, " - TOUS FILTRES PASSÉS - Vol:", volRegime, " Market:", marketRegime);
 
     //--- SIGNAUX POUR SCORING 70% (10 signaux techniques)
     int signalsTotal = 10;
@@ -396,12 +493,12 @@ void AnalyzeSymbol(string symbol, int symbolIndex)
     if(signalsBuy >= minSignalsRequired)
     {
         Print(">>> SIGNAL BUY validé - ", symbol, " avec ", signalsBuy, "/", signalsTotal, " signaux");
-        OpenPosition(symbol, ORDER_TYPE_BUY, currentATR, close, atrAdaptiveMultiplier);
+        OpenPosition(symbol, ORDER_TYPE_BUY, currentATR, close, atrAdaptiveMultiplier, volRegime);
     }
     else if(signalsSell >= minSignalsRequired)
     {
         Print(">>> SIGNAL SELL validé - ", symbol, " avec ", signalsSell, "/", signalsTotal, " signaux");
-        OpenPosition(symbol, ORDER_TYPE_SELL, currentATR, close, atrAdaptiveMultiplier);
+        OpenPosition(symbol, ORDER_TYPE_SELL, currentATR, close, atrAdaptiveMultiplier, volRegime);
     }
     else
     {
@@ -412,7 +509,7 @@ void AnalyzeSymbol(string symbol, int symbolIndex)
 //+------------------------------------------------------------------+
 //| Open position with risk management                               |
 //+------------------------------------------------------------------+
-void OpenPosition(string symbol, ENUM_ORDER_TYPE orderType, double atr, double price, double atrMultiplier)
+void OpenPosition(string symbol, ENUM_ORDER_TYPE orderType, double atr, double price, double atrMultiplier, string volRegime)
 {
     //--- Position sizing adaptatif selon losing streak
     double riskPercent = InpRiskPerTrade;
@@ -421,6 +518,16 @@ void OpenPosition(string symbol, ENUM_ORDER_TYPE orderType, double atr, double p
         riskPercent = InpRiskPerTrade * 0.5; // Réduire risque de 50% après 3 pertes
         if(InpVerboseLogs) Print("Risque réduit à ", riskPercent, "% (losing streak: ", g_ConsecutiveLosses, ")");
     }
+
+    //--- Amélioration #1: Adjust risk based on volatility regime
+    riskPercent = GetVolatilityAdjustedRisk(volRegime, riskPercent);
+    if(riskPercent == 0.0)
+    {
+        Print("Vol regime EXTREME - Trade skipped");
+        return;
+    }
+
+    if(InpVerboseLogs) Print("Risk adjusted for ", volRegime, " regime: ", DoubleToString(riskPercent, 3), "%");
 
     double riskAmount = AccountInfoDouble(ACCOUNT_BALANCE) * (riskPercent / 100.0);
 
@@ -922,10 +1029,274 @@ void OnTradeTransaction(const MqlTradeTransaction& trans,
                             g_ConsecutiveWins = 0;
                             Print("Trade LOSS - Série perdante: ", g_ConsecutiveLosses);
                         }
+
+                        //--- Update Equity Curve (#6)
+                        if(InpEquityCurve_Enabled)
+                        {
+                            UpdateEquityCurve(profit);
+                        }
                     }
                 }
             }
         }
     }
+}
+
+//+------------------------------------------------------------------+
+//| AMÉLIORATION #1: Calculate ATR Volatility Regime                |
+//+------------------------------------------------------------------+
+string CalculateVolatilityRegime(int symbolIndex)
+{
+    if(!InpVolRegime_Enabled) return "NORMAL";
+
+    double atr[];
+    ArraySetAsSeries(atr, true);
+
+    if(CopyBuffer(g_ATR_Handle[symbolIndex], 0, 0, InpVolRegime_Period, atr) < InpVolRegime_Period)
+        return "NORMAL";
+
+    //--- Calculate percentile of current ATR
+    double currentATR = atr[0];
+    double sorted[];
+    ArrayResize(sorted, InpVolRegime_Period);
+    ArrayCopy(sorted, atr, 0, 0, InpVolRegime_Period);
+    ArraySort(sorted);
+
+    int rank = 0;
+    for(int i = 0; i < InpVolRegime_Period; i++)
+    {
+        if(currentATR >= sorted[i]) rank++;
+    }
+
+    double percentile = (double)rank / (double)InpVolRegime_Period * 100.0;
+
+    //--- Classify regime
+    if(percentile >= InpVolRegime_ExtremeThreshold)
+        return "EXTREME";  // > 90 = Skip trades
+    else if(percentile >= InpVolRegime_HighThreshold)
+        return "HIGH";     // 70-90 = High volatility
+    else if(percentile <= InpVolRegime_LowThreshold)
+        return "LOW";      // < 30 = Low volatility
+    else
+        return "NORMAL";   // 30-70 = Normal
+}
+
+//+------------------------------------------------------------------+
+//| AMÉLIORATION #1: Adjust Risk Based on Volatility Regime         |
+//+------------------------------------------------------------------+
+double GetVolatilityAdjustedRisk(string regime, double baseRisk)
+{
+    if(regime == "EXTREME") return 0.0;       // Skip trades
+    if(regime == "HIGH") return baseRisk * 0.67; // Reduce -33%
+    if(regime == "LOW") return baseRisk * 1.33;  // Increase +33%
+    return baseRisk; // NORMAL
+}
+
+//+------------------------------------------------------------------+
+//| AMÉLIORATION #2: Time-Based Session Filter                      |
+//+------------------------------------------------------------------+
+bool CheckTimeFilter()
+{
+    if(!InpTimeFilter_Enabled) return true;
+
+    MqlDateTime dt;
+    TimeToStruct(TimeCurrent(), dt);
+
+    //--- Avoid lunch time (12h-14h GMT) - Low volume
+    if(InpTimeFilter_AvoidLunchTime && dt.hour >= 12 && dt.hour < 14)
+    {
+        if(InpVerboseLogs) Print("Filtre TIME: Lunch time évité (12h-14h)");
+        return false;
+    }
+
+    //--- Avoid Asian night (22h-2h GMT) - Flat market
+    if(InpTimeFilter_AvoidAsianNight && (dt.hour >= 22 || dt.hour < 2))
+    {
+        if(InpVerboseLogs) Print("Filtre TIME: Asian night évité (22h-2h)");
+        return false;
+    }
+
+    return true;
+}
+
+//+------------------------------------------------------------------+
+//| AMÉLIORATION #6: Update Equity Curve                            |
+//+------------------------------------------------------------------+
+void UpdateEquityCurve(double profit)
+{
+    g_EquityCurve[g_EquityCurveIndex] = profit;
+    g_EquityCurveIndex = (g_EquityCurveIndex + 1) % InpEquityCurve_LookbackTrades;
+
+    //--- Check if we have enough data
+    if(ArraySum(g_EquityCurve) == 0 && g_EquityCurveIndex < 5) return;
+
+    //--- Calculate slope (simple linear regression)
+    double sumX = 0, sumY = 0, sumXY = 0, sumX2 = 0;
+    int n = 0;
+
+    for(int i = 0; i < InpEquityCurve_LookbackTrades; i++)
+    {
+        if(g_EquityCurve[i] != 0)
+        {
+            sumX += n;
+            sumY += g_EquityCurve[i];
+            sumXY += n * g_EquityCurve[i];
+            sumX2 += n * n;
+            n++;
+        }
+    }
+
+    if(n < 10) return; // Pas assez de données
+
+    double slope = (n * sumXY - sumX * sumY) / (n * sumX2 - sumX * sumX);
+
+    //--- Negative slope = Losing trend → Pause
+    if(slope < 0)
+    {
+        g_PauseUntilTime = TimeCurrent() + InpEquityCurve_PauseDaysNegSlope * 86400;
+        Print("⚠️ EQUITY CURVE: Slope négatif détecté (", DoubleToString(slope, 4), ") - Pause ", InpEquityCurve_PauseDaysNegSlope, " jours");
+    }
+
+    //--- 10 consecutive losses → Pause
+    if(g_ConsecutiveLosses >= 10)
+    {
+        g_PauseUntilTime = TimeCurrent() + InpEquityCurve_PauseDaysLosingStreak * 86400;
+        Print("⚠️ EQUITY CURVE: 10 pertes consécutives - Pause ", InpEquityCurve_PauseDaysLosingStreak, " jour");
+    }
+}
+
+//+------------------------------------------------------------------+
+//| AMÉLIORATION #6: Check if trading is paused                     |
+//+------------------------------------------------------------------+
+bool CheckEquityPause()
+{
+    if(!InpEquityCurve_Enabled) return true;
+
+    if(TimeCurrent() < g_PauseUntilTime)
+    {
+        if(InpVerboseLogs) Print("EQUITY CURVE: Pause active jusqu'à ", TimeToString(g_PauseUntilTime));
+        return false;
+    }
+
+    return true;
+}
+
+//+------------------------------------------------------------------+
+//| AMÉLIORATION #7: Detect Market Regime (Trending vs Ranging)     |
+//+------------------------------------------------------------------+
+string DetectMarketRegime(int symbolIndex)
+{
+    if(!InpADX_Enabled) return "NEUTRAL";
+
+    double adx[];
+    ArraySetAsSeries(adx, true);
+
+    if(CopyBuffer(g_ADX_Handle[symbolIndex], 0, 0, 3, adx) < 3)
+        return "NEUTRAL";
+
+    double currentADX = adx[0];
+
+    if(currentADX >= InpADX_TrendingThreshold)
+        return "TRENDING";  // ADX > 25
+    else if(currentADX <= InpADX_RangingThreshold)
+        return "RANGING";   // ADX < 20
+    else
+        return "NEUTRAL";   // 20-25
+}
+
+//+------------------------------------------------------------------+
+//| AMÉLIORATION #8: Check Currency Diversification                 |
+//+------------------------------------------------------------------+
+bool CheckCurrencyDiversification(string symbol)
+{
+    //--- Extract currencies from symbol (ex: EURUSD → EUR, USD)
+    string base = StringSubstr(symbol, 0, 3);
+    string quote = StringSubstr(symbol, 3, 3);
+
+    int currencyExposure[];
+    ArrayResize(currencyExposure, 8);
+    ArrayInitialize(currencyExposure, 0);
+
+    string currencies[] = {"EUR", "USD", "GBP", "JPY", "CHF", "AUD", "NZD", "CAD"};
+
+    //--- Count currency exposure in open positions
+    for(int i = 0; i < PositionsTotal(); i++)
+    {
+        if(PositionGetTicket(i) > 0 && PositionGetInteger(POSITION_MAGIC) == InpMagicNumber)
+        {
+            string posSymbol = PositionGetString(POSITION_SYMBOL);
+            string posBase = StringSubstr(posSymbol, 0, 3);
+            string posQuote = StringSubstr(posSymbol, 3, 3);
+
+            for(int c = 0; c < 8; c++)
+            {
+                if(posBase == currencies[c] || posQuote == currencies[c])
+                    currencyExposure[c]++;
+            }
+        }
+    }
+
+    //--- Check if adding this trade would exceed 40% single currency exposure
+    int totalPositions = PositionsTotal();
+    if(totalPositions == 0) return true;
+
+    for(int c = 0; c < 8; c++)
+    {
+        if(base == currencies[c] || quote == currencies[c])
+        {
+            double exposurePercent = (double)(currencyExposure[c] + 1) / (double)(totalPositions + 1) * 100.0;
+
+            if(exposurePercent > 40.0)
+            {
+                if(InpVerboseLogs)
+                    Print("Filtre CURRENCY DIVERSIFICATION: ", currencies[c], " exposition > 40% (", DoubleToString(exposurePercent, 1), "%)");
+                return false;
+            }
+        }
+    }
+
+    return true;
+}
+
+//+------------------------------------------------------------------+
+//| AMÉLIORATION #10: Check News Filter                             |
+//+------------------------------------------------------------------+
+bool CheckNewsFilter()
+{
+    if(!InpNews_Enabled) return true;
+
+    //--- Get current calendar events from MT5
+    MqlCalendarValue values[];
+    MqlCalendarEvent events[];
+
+    datetime from = TimeCurrent();
+    datetime to = from + InpNews_PauseBeforeMinutes * 60;
+
+    if(CalendarValueHistory(values, from, to, NULL, NULL) > 0)
+    {
+        for(int i = 0; i < ArraySize(values); i++)
+        {
+            MqlCalendarEvent event;
+            if(CalendarEventById(values[i].event_id, event))
+            {
+                //--- Check if high impact news
+                if(event.importance == CALENDAR_IMPORTANCE_HIGH)
+                {
+                    datetime eventTime = values[i].time;
+                    datetime pauseBefore = eventTime - InpNews_PauseBeforeMinutes * 60;
+                    datetime pauseAfter = eventTime + InpNews_PauseAfterMinutes * 60;
+
+                    if(TimeCurrent() >= pauseBefore && TimeCurrent() <= pauseAfter)
+                    {
+                        if(InpVerboseLogs)
+                            Print("Filtre NEWS: High impact news détecté (", event.name, ") - Pause");
+                        return false;
+                    }
+                }
+            }
+        }
+    }
+
+    return true;
 }
 //+------------------------------------------------------------------+
