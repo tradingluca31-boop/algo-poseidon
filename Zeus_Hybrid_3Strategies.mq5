@@ -17,9 +17,9 @@
 input group "=== FTMO RISK MANAGEMENT ==="
 input double InpRiskPerTrade = 0.30;           // Risque par trade (%)
 input double InpMaxSimultaneousRisk = 3.0;     // Risque simultané max (%)
-input double InpMaxDailyLoss = 3.0;            // Perte quotidienne max (%)
-input double InpMaxDrawdown = 8.0;             // Drawdown max (%)
+input double InpMaxDailyLoss = 3.0;            // Perte quotidienne max (%) - LIMITE DURE
 input int    InpMaxPositions = 10;             // Positions simultanées max
+// Note: Objectif DD total < 8% (pas une limite, juste un goal de performance)
 
 input group "=== STRATEGY 1: DAILY RANGE BREAKOUT ==="
 input int    InpDRB_StartHour = 0;             // Heure début calcul range
@@ -684,7 +684,7 @@ bool CheckFTMOLimits()
 {
     double balance = AccountInfoDouble(ACCOUNT_BALANCE);
 
-    //--- Daily loss check (calculé sur balance début journée)
+    //--- Daily loss check (calculé sur balance début journée) - LIMITE DURE
     double dailyLossPercent = (g_DailyPnL / g_DailyStartBalance) * 100.0;
     if(dailyLossPercent <= -InpMaxDailyLoss)
     {
@@ -692,12 +692,11 @@ bool CheckFTMOLimits()
         return false;
     }
 
-    //--- Drawdown check
+    //--- Drawdown total monitoring (objectif < 8%, pas une limite)
     double currentDD = CalculateCurrentDrawdown();
-    if(currentDD >= InpMaxDrawdown)
+    if(InpVerboseLogs && currentDD > 5.0)
     {
-        Print("FTMO STOP: DRAWDOWN MAX ATTEINT (", DoubleToString(currentDD, 2), "%)");
-        return false;
+        Print("INFO: Drawdown total actuel: ", DoubleToString(currentDD, 2), "% (Objectif: < 8%)");
     }
 
     //--- Max positions check
