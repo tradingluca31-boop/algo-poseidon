@@ -53,7 +53,7 @@ input double InpTS_Phase3_Profit = 3.0;        // Phase 3: % profit pour trailin
 input double InpTS_ATRMultiplier = 2.0;        // Multiplicateur ATR pour distance
 
 input group "=== CORRELATION & EXPOSURE ==="
-input double InpMaxCorrelation = 0.80;         // Corrélation max autorisée
+input double InpMaxCorrelation = 0.85;         // Corrélation max autorisée - OPTIMISER: 0.75-0.90 (step 0.05)
 input int    InpCorrelationPeriod = 100;       // Période calcul corrélation
 input ENUM_TIMEFRAMES InpCorrelationTF = PERIOD_H1; // Timeframe corrélation
 
@@ -62,17 +62,17 @@ input bool   InpVolRegime_Enabled = true;      // Activer détection volatilité
 input int    InpVolRegime_Period = 100;        // Période calcul percentile ATR
 input double InpVolRegime_LowThreshold = 30.0; // Seuil Low (percentile)
 input double InpVolRegime_HighThreshold = 70.0;// Seuil High (percentile)
-input double InpVolRegime_ExtremeThreshold = 90.0; // Seuil Extreme (skip trades)
+input double InpVolRegime_ExtremeThreshold = 95.0; // Seuil Extreme (skip trades) - OPTIMISER: 90-99
 
 input group "=== TIME-BASED FILTERS (Amélioration #2) ==="
 input bool   InpTimeFilter_Enabled = true;     // Activer filtres horaires
-input bool   InpTimeFilter_AvoidLunchTime = true; // Éviter 12h-14h (low volume)
-input bool   InpTimeFilter_AvoidAsianNight = true; // Éviter 22h-2h (flat)
+input bool   InpTimeFilter_AvoidLunchTime = false; // Éviter 12h-14h (low volume) - OPTIMISER: true/false
+input bool   InpTimeFilter_AvoidAsianNight = true; // Éviter 22h-2h (flat) - OPTIMISER: true/false
 
 input group "=== EQUITY CURVE MONITORING (Amélioration #6) ==="
-input bool   InpEquityCurve_Enabled = true;    // Activer monitoring equity curve
+input bool   InpEquityCurve_Enabled = false;   // Activer monitoring equity curve - DÉSACTIVÉ pour backtest
 input int    InpEquityCurve_LookbackTrades = 20; // Trades pour calcul slope
-input int    InpEquityCurve_PauseDaysNegSlope = 3; // Pause si slope négatif (jours)
+input int    InpEquityCurve_PauseDaysNegSlope = 1; // Pause si slope négatif (jours) - OPTIMISER: 1-3
 input int    InpEquityCurve_PauseDaysLosingStreak = 1; // Pause si 10 pertes (jours)
 
 input group "=== MARKET REGIME ADX (Amélioration #7) ==="
@@ -86,11 +86,14 @@ input bool   InpML_Enabled = true;             // Activer ML tracking signaux
 input int    InpML_RecalibrationTrades = 100;  // Recalibrer tous les X trades
 
 input group "=== NEWS FILTER (Amélioration #10) ==="
-input bool   InpNews_Enabled = true;           // Activer filtre news (Myfxbook XML gratuit)
-input int    InpNews_PauseBeforeMinutes = 15;  // Pause avant news (minutes)
-input int    InpNews_PauseAfterMinutes = 30;   // Pause après news (minutes)
-input int    InpNews_MinImportance = 2;        // Importance min (1=Low, 2=Medium, 3=High)
+input bool   InpNews_Enabled = false;          // Activer filtre news - DÉSACTIVÉ pour backtest (pas de données historiques)
+input int    InpNews_PauseBeforeMinutes = 10;  // Pause avant news (minutes) - OPTIMISER: 5-15
+input int    InpNews_PauseAfterMinutes = 20;   // Pause après news (minutes) - OPTIMISER: 15-30
+input int    InpNews_MinImportance = 3;        // Importance min (1=Low, 2=Medium, 3=High) - OPTIMISER: 2-3
 input int    InpNews_UpdateIntervalHours = 6;  // Update news cache (heures)
+
+input group "=== SCORING SIGNALS ==="
+input int    InpMinSignalsRequired = 6;        // Signaux minimum requis - OPTIMISER: 5-8 (step 1)
 
 input group "=== GENERAL SETTINGS ==="
 input int    InpMagicNumber = 789456;          // Magic Number
@@ -492,29 +495,27 @@ void AnalyzeSymbol(string symbol, int symbolIndex)
     if(close > rangeCenter) signalsBuy++;
     else if(close < rangeCenter) signalsSell++;
 
-    //--- EVALUATE THRESHOLD (7/10 signaux minimum)
-    int minSignalsRequired = 7; // 7 signaux sur 10
-
+    //--- EVALUATE THRESHOLD (configurable via InpMinSignalsRequired)
     if(InpVerboseLogs)
     {
         Print("=== ", symbol, " === Signaux BUY: ", signalsBuy, "/", signalsTotal,
               " | SELL: ", signalsSell, "/", signalsTotal);
     }
 
-    //--- Execute trade si >= 7 signaux avec position sizing adaptatif
-    if(signalsBuy >= minSignalsRequired)
+    //--- Execute trade si >= seuil signaux avec position sizing adaptatif
+    if(signalsBuy >= InpMinSignalsRequired)
     {
         Print(">>> SIGNAL BUY validé - ", symbol, " avec ", signalsBuy, "/", signalsTotal, " signaux");
         OpenPosition(symbol, ORDER_TYPE_BUY, currentATR, close, atrAdaptiveMultiplier, volRegime);
     }
-    else if(signalsSell >= minSignalsRequired)
+    else if(signalsSell >= InpMinSignalsRequired)
     {
         Print(">>> SIGNAL SELL validé - ", symbol, " avec ", signalsSell, "/", signalsTotal, " signaux");
         OpenPosition(symbol, ORDER_TYPE_SELL, currentATR, close, atrAdaptiveMultiplier, volRegime);
     }
     else
     {
-        if(InpVerboseLogs) Print("Seuil ", minSignalsRequired, "/", signalsTotal, " non atteint pour ", symbol);
+        if(InpVerboseLogs) Print("Seuil ", InpMinSignalsRequired, "/", signalsTotal, " non atteint pour ", symbol);
     }
 }
 
