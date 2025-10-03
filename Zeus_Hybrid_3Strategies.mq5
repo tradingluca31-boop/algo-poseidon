@@ -28,12 +28,15 @@ input int    InpDRB_TradingStartHour = 6;      // Heure début trading
 input int    InpDRB_TradingEndHour = 22;       // Heure fin trading
 input double InpDRB_RiskReward = 5.0;          // Risk:Reward ratio (1:5)
 input double InpDRB_BreakoutBuffer = 5.0;      // Buffer breakout (points)
+input bool   InpDRB_RequirePullback = true;    // Exiger pullback après breakout
 
 input group "=== STRATEGY 2: MEAN REVERSION ATR ==="
 input int    InpMR_EMAPeriod = 200;            // Période EMA
 input int    InpMR_ATRPeriod = 14;             // Période ATR
 input double InpMR_ATRMultiplier = 2.0;        // Multiplicateur ATR
 input double InpMR_MinATR = 0.0001;            // ATR minimum
+input double InpMR_ATRAdaptiveMin = 1.5;       // ATR adaptatif Min
+input double InpMR_ATRAdaptiveMax = 3.0;       // ATR adaptatif Max
 
 input group "=== SIGNAUX TECHNIQUES ==="
 input int    InpRSI_Period = 14;               // Période RSI
@@ -58,6 +61,9 @@ input group "=== GENERAL SETTINGS ==="
 input int    InpMagicNumber = 789456;          // Magic Number
 input string InpTradeComment = "Zeus_Hybrid";  // Commentaire trades
 input bool   InpVerboseLogs = true;            // Logs détaillés
+input double InpMaxSpreadATR = 2.0;            // Spread max en ATR
+input bool   InpPartialExit = true;            // Sorties partielles activées
+input double InpPartialExitPercent = 50.0;     // % position à clôturer (TP1)
 
 //--- Currency pairs
 string g_Symbols[] = {"EURUSD", "GBPUSD", "USDJPY", "USDCHF", "AUDUSD", "NZDUSD", "USDCAD"};
@@ -69,6 +75,8 @@ datetime g_DailyResetTime = 0;
 double g_DailyPnL = 0.0;
 double g_InitialBalance = 0.0;
 double g_PeakBalance = 0.0;
+int g_ConsecutiveLosses = 0;
+int g_ConsecutiveWins = 0;
 
 //--- Indicator handles
 int g_EMA_Handle[];
@@ -253,6 +261,18 @@ void AnalyzeSymbol(string symbol, int symbolIndex)
         return;
     }
 
+    //--- Filtre 4b: Spread check
+    double ask = SymbolInfoDouble(symbol, SYMBOL_ASK);
+    double bid = SymbolInfoDouble(symbol, SYMBOL_BID);
+    double spread = ask - bid;
+    double maxSpread = currentATR * InpMaxSpreadATR;
+
+    if(spread > maxSpread)
+    {
+        if(InpVerboseLogs) Print("Filtre SPREAD échoué: ", symbol, " Spread=", spread, " Max=", maxSpread);
+        return;
+    }
+
     //--- Filtre 5: Drawdown sous contrôle (80% du max)
     if(CalculateCurrentDrawdown() >= InpMaxDrawdown * 0.8)
     {
@@ -273,16 +293,47 @@ void AnalyzeSymbol(string symbol, int symbolIndex)
     int signalsTotal = 10;
     int signalsBuy = 0, signalsSell = 0;
 
-    //--- Signal 1: Daily Range Breakout (Stratégie 1)
+    //--- Signal 1: Daily Range Breakout (Stratégie 1) avec confirmation pullback
     double highBreakout = g_DailyRange[symbolIndex].highPrice + InpDRB_BreakoutBuffer * _Point;
     double lowBreakout = g_DailyRange[symbolIndex].lowPrice - InpDRB_BreakoutBuffer * _Point;
 
-    if(close > highBreakout) signalsBuy++;
-    else if(close < lowBreakout) signalsSell++;
+    bool bullishBreakout = false;
+    bool bearishBreakout = false;
 
-    //--- Signal 2: Mean Reversion ATR (Stratégie 2)
-    double upperBand = currentEMA + (currentATR * InpMR_ATRMultiplier);
-    double lowerBand = currentEMA - (currentATR * InpMR_ATRMultiplier);
+    if(InpDRB_RequirePullback)
+    {
+        // Breakout haussier avec pullback: prix a cassé, puis pullback vers le niveau
+        if(high > highBreakout && close < high && close > highBreakout - (currentATR * 0.5))
+            bullishBreakout = true;
+        // Breakout baissier avec pullback
+        if(low < lowBreakout && close > low && close < lowBreakout + (currentATR * 0.5))
+            bearishBreakout = true;
+    }
+    else
+    {
+        if(close > highBreakout) bullishBreakout = true;
+        if(close < lowBreakout) bearishBreakout = true;
+    }
+
+    if(bullishBreakout) signalsBuy++;
+    else if(bearishBreakout) signalsSell++;
+
+    //--- Signal 2: Mean Reversion ATR adaptatif (Stratégie 2)
+    // Calculer ATR adaptatif basé sur la volatilité récente
+    double atrAdaptiveMultiplier = InpMR_ATRMultiplier;
+    if(atr[1] > atr[2] && atr[2] > atr[3])
+    {
+        // Volatilité croissante = élargir les bandes
+        atrAdaptiveMultiplier = InpMR_ATRAdaptiveMax;
+    }
+    else if(atr[1] < atr[2] && atr[2] < atr[3])
+    {
+        // Volatilité décroissante = resserrer les bandes
+        atrAdaptiveMultiplier = InpMR_ATRAdaptiveMin;
+    }
+
+    double upperBand = currentEMA + (currentATR * atrAdaptiveMultiplier);
+    double lowerBand = currentEMA - (currentATR * atrAdaptiveMultiplier);
 
     if(close < lowerBand) signalsBuy++;      // Prix bas = buy mean reversion
     else if(close > upperBand) signalsSell++; // Prix haut = sell mean reversion
@@ -336,16 +387,16 @@ void AnalyzeSymbol(string symbol, int symbolIndex)
               " (", DoubleToString(sellRate * 100, 1), "%)");
     }
 
-    //--- Execute trade si >= 70% (7/10 signaux)
+    //--- Execute trade si >= 70% (7/10 signaux) avec position sizing adaptatif
     if(buyRate >= 0.70)
     {
         Print(">>> SIGNAL BUY validé - ", symbol, " avec ", DoubleToString(buyRate * 100, 1), "% des signaux");
-        OpenPosition(symbol, ORDER_TYPE_BUY, currentATR, close);
+        OpenPosition(symbol, ORDER_TYPE_BUY, currentATR, close, atrAdaptiveMultiplier);
     }
     else if(sellRate >= 0.70)
     {
         Print(">>> SIGNAL SELL validé - ", symbol, " avec ", DoubleToString(sellRate * 100, 1), "% des signaux");
-        OpenPosition(symbol, ORDER_TYPE_SELL, currentATR, close);
+        OpenPosition(symbol, ORDER_TYPE_SELL, currentATR, close, atrAdaptiveMultiplier);
     }
     else
     {
@@ -356,26 +407,35 @@ void AnalyzeSymbol(string symbol, int symbolIndex)
 //+------------------------------------------------------------------+
 //| Open position with risk management                               |
 //+------------------------------------------------------------------+
-void OpenPosition(string symbol, ENUM_ORDER_TYPE orderType, double atr, double price)
+void OpenPosition(string symbol, ENUM_ORDER_TYPE orderType, double atr, double price, double atrMultiplier)
 {
-    //--- Calculate position size
-    double riskAmount = AccountInfoDouble(ACCOUNT_BALANCE) * (InpRiskPerTrade / 100.0);
+    //--- Position sizing adaptatif selon losing streak
+    double riskPercent = InpRiskPerTrade;
+    if(g_ConsecutiveLosses >= 3)
+    {
+        riskPercent = InpRiskPerTrade * 0.5; // Réduire risque de 50% après 3 pertes
+        if(InpVerboseLogs) Print("Risque réduit à ", riskPercent, "% (losing streak: ", g_ConsecutiveLosses, ")");
+    }
 
-    //--- Calculate SL/TP based on ATR and RR ratio
-    double slDistance = atr * InpMR_ATRMultiplier;
+    double riskAmount = AccountInfoDouble(ACCOUNT_BALANCE) * (riskPercent / 100.0);
+
+    //--- Calculate SL/TP based on ATR adaptatif
+    double slDistance = atr * atrMultiplier;
     double tpDistance = slDistance * InpDRB_RiskReward;
 
-    double sl = 0, tp = 0;
+    double sl = 0, tp = 0, tp1 = 0;
 
     if(orderType == ORDER_TYPE_BUY)
     {
         sl = price - slDistance;
         tp = price + tpDistance;
+        tp1 = price + (tpDistance * 0.3); // TP1 à 30% du chemin (1:1.5 environ)
     }
     else if(orderType == ORDER_TYPE_SELL)
     {
         sl = price + slDistance;
         tp = price - tpDistance;
+        tp1 = price - (tpDistance * 0.3); // TP1 à 30% du chemin
     }
 
     //--- Calculate lot size
@@ -393,24 +453,69 @@ void OpenPosition(string symbol, ENUM_ORDER_TYPE orderType, double atr, double p
     lotSize = MathFloor(lotSize / lotStep) * lotStep;
     lotSize = MathMax(minLot, MathMin(maxLot, lotSize));
 
-    //--- Execute order
+    //--- Execute order avec sorties partielles
     bool result = false;
 
-    if(orderType == ORDER_TYPE_BUY)
+    if(InpPartialExit)
     {
-        result = g_Trade.Buy(lotSize, symbol, 0, sl, tp, InpTradeComment);
-    }
-    else if(orderType == ORDER_TYPE_SELL)
-    {
-        result = g_Trade.Sell(lotSize, symbol, 0, sl, tp, InpTradeComment);
-    }
+        // Ouvrir 2 positions pour permettre sortie partielle
+        double lot1 = lotSize * (InpPartialExitPercent / 100.0);
+        double lot2 = lotSize - lot1;
 
-    if(result)
-    {
-        Print(">>> ORDRE OUVERT: ", symbol, " | Type: ", EnumToString(orderType),
-              " | Lot: ", lotSize, " | SL: ", sl, " | TP: ", tp);
+        lot1 = MathFloor(lot1 / lotStep) * lotStep;
+        lot2 = MathFloor(lot2 / lotStep) * lotStep;
+
+        if(lot1 >= minLot && lot2 >= minLot)
+        {
+            // Position 1: TP rapproché (30% du chemin)
+            if(orderType == ORDER_TYPE_BUY)
+                result = g_Trade.Buy(lot1, symbol, 0, sl, tp1, InpTradeComment + "_TP1");
+            else
+                result = g_Trade.Sell(lot1, symbol, 0, sl, tp1, InpTradeComment + "_TP1");
+
+            // Position 2: TP final
+            if(result)
+            {
+                if(orderType == ORDER_TYPE_BUY)
+                    g_Trade.Buy(lot2, symbol, 0, sl, tp, InpTradeComment + "_TP2");
+                else
+                    g_Trade.Sell(lot2, symbol, 0, sl, tp, InpTradeComment + "_TP2");
+
+                Print(">>> ORDRES OUVERTS (Partial Exit): ", symbol, " | Type: ", EnumToString(orderType),
+                      " | Lot1: ", lot1, " (TP1: ", tp1, ") | Lot2: ", lot2, " (TP2: ", tp, ") | SL: ", sl);
+            }
+        }
+        else
+        {
+            // Lot trop petit pour split, position unique
+            if(orderType == ORDER_TYPE_BUY)
+                result = g_Trade.Buy(lotSize, symbol, 0, sl, tp, InpTradeComment);
+            else
+                result = g_Trade.Sell(lotSize, symbol, 0, sl, tp, InpTradeComment);
+
+            if(result)
+            {
+                Print(">>> ORDRE OUVERT: ", symbol, " | Type: ", EnumToString(orderType),
+                      " | Lot: ", lotSize, " | SL: ", sl, " | TP: ", tp);
+            }
+        }
     }
     else
+    {
+        // Pas de sortie partielle
+        if(orderType == ORDER_TYPE_BUY)
+            result = g_Trade.Buy(lotSize, symbol, 0, sl, tp, InpTradeComment);
+        else
+            result = g_Trade.Sell(lotSize, symbol, 0, sl, tp, InpTradeComment);
+
+        if(result)
+        {
+            Print(">>> ORDRE OUVERT: ", symbol, " | Type: ", EnumToString(orderType),
+                  " | Lot: ", lotSize, " | SL: ", sl, " | TP: ", tp);
+        }
+    }
+
+    if(!result)
     {
         Print("ERREUR ouverture ordre: ", symbol, " - ", g_Trade.ResultRetcodeDescription());
     }
@@ -774,5 +879,46 @@ void CheckDailyReset()
     //--- Update daily P&L
     double currentBalance = AccountInfoDouble(ACCOUNT_BALANCE);
     g_DailyPnL = currentBalance - g_InitialBalance;
+}
+
+//+------------------------------------------------------------------+
+//| Track wins/losses for adaptive position sizing                   |
+//+------------------------------------------------------------------+
+void OnTradeTransaction(const MqlTradeTransaction& trans,
+                        const MqlTradeRequest& request,
+                        const MqlTradeResult& result)
+{
+    if(trans.type == TRADE_TRANSACTION_DEAL_ADD)
+    {
+        ulong dealTicket = trans.deal;
+        if(dealTicket > 0)
+        {
+            if(HistoryDealSelect(dealTicket))
+            {
+                long dealMagic = HistoryDealGetInteger(dealTicket, DEAL_MAGIC);
+                if(dealMagic == InpMagicNumber)
+                {
+                    long dealEntry = HistoryDealGetInteger(dealTicket, DEAL_ENTRY);
+                    if(dealEntry == DEAL_ENTRY_OUT) // Position fermée
+                    {
+                        double profit = HistoryDealGetDouble(dealTicket, DEAL_PROFIT);
+
+                        if(profit > 0)
+                        {
+                            g_ConsecutiveWins++;
+                            g_ConsecutiveLosses = 0;
+                            Print("Trade WIN - Série gagnante: ", g_ConsecutiveWins);
+                        }
+                        else if(profit < 0)
+                        {
+                            g_ConsecutiveLosses++;
+                            g_ConsecutiveWins = 0;
+                            Print("Trade LOSS - Série perdante: ", g_ConsecutiveLosses);
+                        }
+                    }
+                }
+            }
+        }
+    }
 }
 //+------------------------------------------------------------------+
