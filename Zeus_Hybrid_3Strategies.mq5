@@ -73,6 +73,7 @@ CTrade g_Trade;
 datetime g_LastBarTime = 0;
 datetime g_DailyResetTime = 0;
 double g_DailyPnL = 0.0;
+double g_DailyStartBalance = 0.0;
 double g_InitialBalance = 0.0;
 double g_PeakBalance = 0.0;
 int g_ConsecutiveLosses = 0;
@@ -146,6 +147,7 @@ int OnInit()
 
     //--- Initialize balance tracking
     g_InitialBalance = AccountInfoDouble(ACCOUNT_BALANCE);
+    g_DailyStartBalance = g_InitialBalance;
     g_PeakBalance = g_InitialBalance;
     g_DailyResetTime = TimeCurrent();
 
@@ -273,10 +275,11 @@ void AnalyzeSymbol(string symbol, int symbolIndex)
         return;
     }
 
-    //--- Filtre 5: Drawdown sous contrôle (80% du max)
-    if(CalculateCurrentDrawdown() >= InpMaxDrawdown * 0.8)
+    //--- Filtre 5: Daily Loss sous contrôle (80% du max quotidien)
+    double dailyLossPercent = (g_DailyPnL / g_DailyStartBalance) * 100.0;
+    if(dailyLossPercent <= -(InpMaxDailyLoss * 0.8)) // -2.4% si max = 3%
     {
-        if(InpVerboseLogs) Print("Filtre DRAWDOWN échoué: ", symbol);
+        if(InpVerboseLogs) Print("Filtre DAILY LOSS échoué: ", symbol, " Daily P&L: ", DoubleToString(dailyLossPercent, 2), "%");
         return;
     }
 
@@ -681,8 +684,8 @@ bool CheckFTMOLimits()
 {
     double balance = AccountInfoDouble(ACCOUNT_BALANCE);
 
-    //--- Daily loss check
-    double dailyLossPercent = (g_DailyPnL / balance) * 100.0;
+    //--- Daily loss check (calculé sur balance début journée)
+    double dailyLossPercent = (g_DailyPnL / g_DailyStartBalance) * 100.0;
     if(dailyLossPercent <= -InpMaxDailyLoss)
     {
         Print("FTMO STOP: DAILY LOSS LIMIT ATTEINT (", DoubleToString(dailyLossPercent, 2), "%)");
@@ -870,15 +873,18 @@ void CheckDailyReset()
 
     if(today > g_DailyResetTime)
     {
+        double currentBalance = AccountInfoDouble(ACCOUNT_BALANCE);
+        g_DailyStartBalance = currentBalance; // Balance début journée
         g_DailyPnL = 0.0;
         g_DailyResetTime = today;
 
         Print("===== RESET QUOTIDIEN - Nouvelle journée de trading =====");
+        Print("Balance début journée: ", g_DailyStartBalance);
     }
 
     //--- Update daily P&L
     double currentBalance = AccountInfoDouble(ACCOUNT_BALANCE);
-    g_DailyPnL = currentBalance - g_InitialBalance;
+    g_DailyPnL = currentBalance - g_DailyStartBalance; // P&L depuis début journée
 }
 
 //+------------------------------------------------------------------+
