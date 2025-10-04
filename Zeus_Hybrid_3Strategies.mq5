@@ -26,17 +26,18 @@ input int    InpDRB_StartHour = 0;             // Heure début calcul range
 input int    InpDRB_EndHour = 6;               // Heure fin calcul range
 input int    InpDRB_TradingStartHour = 6;      // Heure début trading
 input int    InpDRB_TradingEndHour = 22;       // Heure fin trading
-input double InpDRB_RiskReward = 5.0;          // Risk:Reward ratio (1:5)
+input double InpDRB_RiskReward = 3.0;          // Risk:Reward ratio (1:3) - OPTIMISER: 2.0-5.0
 input double InpDRB_BreakoutBuffer = 5.0;      // Buffer breakout (points)
 input bool   InpDRB_RequirePullback = true;    // Exiger pullback après breakout
 
 input group "=== STRATEGY 2: MEAN REVERSION ATR ==="
 input int    InpMR_EMAPeriod = 200;            // Période EMA
 input int    InpMR_ATRPeriod = 14;             // Période ATR
-input double InpMR_ATRMultiplier = 2.0;        // Multiplicateur ATR
+input double InpMR_ATRMultiplier = 2.0;        // Multiplicateur ATR pour bandes
 input double InpMR_MinATR = 0.0001;            // ATR minimum
-input double InpMR_ATRAdaptiveMin = 1.5;       // ATR adaptatif Min
-input double InpMR_ATRAdaptiveMax = 3.0;       // ATR adaptatif Max
+input double InpMR_ATRAdaptiveMin = 2.5;       // ATR adaptatif Min - OPTIMISER: 2.0-4.0
+input double InpMR_ATRAdaptiveMax = 4.0;       // ATR adaptatif Max - OPTIMISER: 3.0-5.0
+input double InpMR_SLMultiplier = 3.0;         // Multiplicateur ATR pour SL - OPTIMISER: 2.5-4.0
 
 input group "=== SIGNAUX TECHNIQUES ==="
 input int    InpRSI_Period = 14;               // Période RSI
@@ -545,7 +546,7 @@ void OpenPosition(string symbol, ENUM_ORDER_TYPE orderType, double atr, double p
     double riskAmount = AccountInfoDouble(ACCOUNT_BALANCE) * (riskPercent / 100.0);
 
     //--- Calculate SL/TP based on ATR adaptatif
-    double slDistance = atr * atrMultiplier;
+    double slDistance = atr * InpMR_SLMultiplier;  // SL séparé du multiplicateur bandes
     double tpDistance = slDistance * InpDRB_RiskReward;
 
     double sl = 0, tp = 0, tp1 = 0;
