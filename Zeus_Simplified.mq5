@@ -1,19 +1,24 @@
 //+------------------------------------------------------------------+
 //|                                           Zeus_Simplified.mq5    |
-//|                                    Version Simplifiée - SL/TP Fixe|
+//|                                 Version ATR - SL/TP Dynamique     |
 //|                                                                    |
-//| OPTIMISATIONS v2.1 (réduction DD):                               |
-//| - SL: 1.00% du prix d'entrée (1R)                                |
-//| - TP: 3.00% du prix d'entrée (1:3 RR)                            |
-//| - BE à 1R (1.00% profit)                                          |
+//| OPTIMISATIONS v3.0 (ATR DYNAMIQUE):                              |
+//| - SL: 1.5 × ATR (s'adapte à la volatilité)                       |
+//| - TP: 4.5 × ATR (RR 1:3 GARANTI)                                 |
+//| - BE: 1.5 × ATR (à 1R)                                            |
 //| - TIME STOP: Fermeture auto après 48h                            |
 //| - FILTRE ADX: Skip trades si RANGING (ADX < 20)                  |
 //| - Signaux minimum: 4/10 (au lieu de 6/10)                        |
 //| - 10 signaux techniques pour scoring                              |
 //| - Pas de trades opposés (logique directionnelle)                  |
+//|                                                                    |
+//| AVANTAGES ATR:                                                    |
+//| - SL pas trop serré (s'adapte au marché)                         |
+//| - TP plus proche et atteignable                                   |
+//| - RR 1:3 mathématiquement garanti                                |
 //+------------------------------------------------------------------+
 #property copyright "Zeus Trading System - Simplified"
-#property version   "2.10"
+#property version   "3.00"
 #property strict
 
 #include <Trade\Trade.mqh>
@@ -25,10 +30,10 @@ input double InpMaxSimultaneousRisk = 3.0;     // Risque simultané max (%)
 input double InpMaxDailyLoss = 3.0;            // Perte quotidienne max (%) - STOP TRADING
 input int    InpMaxPositions = 10;             // Positions simultanées max
 
-input group "=== SL/TP FIXE ==="
-input double InpSL_Percent = 1.00;             // Stop Loss (% du prix) - 1R
-input double InpTP_Percent = 3.00;             // Take Profit (% du prix) - 3R
-input double InpBE_TriggerR = 1.0;             // Break Even à XR (1.0 = 1R = 1.00%)
+input group "=== SL/TP ATR DYNAMIQUE ==="
+input double InpSL_ATR_Multiplier = 1.5;       // SL: Multiplicateur ATR (1.5 × ATR)
+input double InpTP_ATR_Multiplier = 4.5;       // TP: Multiplicateur ATR (4.5 × ATR = RR 1:3)
+input double InpBE_ATR_Multiplier = 1.5;       // BE: Multiplicateur ATR (1.5 × ATR = 1R)
 input int    InpMaxHoldingHours = 48;          // Time Stop: fermeture auto après X heures
 
 input group "=== TRADING HOURS ==="
@@ -362,12 +367,42 @@ void AnalyzeSymbol(string symbol, int symbolIndex)
 }
 
 //+------------------------------------------------------------------+
-//| Execute Trade with Fixed SL/TP                                   |
+//| Execute Trade with ATR-based SL/TP                               |
 //+------------------------------------------------------------------+
 void ExecuteTrade(string symbol, ENUM_ORDER_TYPE orderType, double price)
 {
+    //--- Get ATR value
+    int symbolIndex = -1;
+    for(int i = 0; i < ArraySize(g_Symbols); i++)
+    {
+        if(g_Symbols[i] == symbol)
+        {
+            symbolIndex = i;
+            break;
+        }
+    }
+
+    if(symbolIndex < 0)
+    {
+        if(InpVerboseLogs) Print("Symbole non trouvé: ", symbol);
+        return;
+    }
+
+    double atr[];
+    ArraySetAsSeries(atr, true);
+    if(CopyBuffer(g_ATR_Handle[symbolIndex], 0, 0, 3, atr) < 3)
+    {
+        if(InpVerboseLogs) Print("Erreur lecture ATR pour ", symbol);
+        return;
+    }
+
+    double currentATR = atr[1];
+
+    //--- Calculate SL and TP based on ATR (RR 1:3 garanti)
+    double slDistance = currentATR * InpSL_ATR_Multiplier;  // 1.5 × ATR
+    double tpDistance = currentATR * InpTP_ATR_Multiplier;  // 4.5 × ATR (RR 1:3)
+
     //--- Calculate lot size based on risk
-    double slDistance = price * (InpSL_Percent / 100.0);
     double lotSize = CalculateLotSize(symbol, slDistance);
 
     if(lotSize <= 0)
@@ -376,18 +411,18 @@ void ExecuteTrade(string symbol, ENUM_ORDER_TYPE orderType, double price)
         return;
     }
 
-    //--- Calculate SL and TP (FIXED %)
+    //--- Calculate SL and TP prices
     double sl, tp;
 
     if(orderType == ORDER_TYPE_BUY)
     {
-        sl = price - (price * InpSL_Percent / 100.0);  // -0.70%
-        tp = price + (price * InpTP_Percent / 100.0);  // +3.50%
+        sl = price - slDistance;
+        tp = price + tpDistance;
     }
     else // SELL
     {
-        sl = price + (price * InpSL_Percent / 100.0);  // +0.70%
-        tp = price - (price * InpTP_Percent / 100.0);  // -3.50%
+        sl = price + slDistance;
+        tp = price - tpDistance;
     }
 
     //--- Normalize prices
@@ -404,8 +439,12 @@ void ExecuteTrade(string symbol, ENUM_ORDER_TYPE orderType, double price)
 
     if(result)
     {
+        double slPercent = (slDistance / price) * 100.0;
+        double tpPercent = (tpDistance / price) * 100.0;
         Print(">>> ORDRE OUVERT: ", symbol, " | Type: ", EnumToString(orderType),
-              " | Lot: ", lotSize, " | SL: ", sl, " (", InpSL_Percent, "%) | TP: ", tp, " (", InpTP_Percent, "%)");
+              " | Lot: ", lotSize, " | ATR: ", DoubleToString(currentATR, 5),
+              " | SL: ", sl, " (", DoubleToString(slPercent, 2), "% / ", InpSL_ATR_Multiplier, "×ATR)",
+              " | TP: ", tp, " (", DoubleToString(tpPercent, 2), "% / ", InpTP_ATR_Multiplier, "×ATR) | RR 1:3");
     }
     else
     {
@@ -437,7 +476,7 @@ double CalculateLotSize(string symbol, double slDistance)
 }
 
 //+------------------------------------------------------------------+
-//| Update Break Even for all positions                              |
+//| Update Break Even for all positions (ATR-based)                 |
 //+------------------------------------------------------------------+
 void UpdateAllBreakEven()
 {
@@ -452,9 +491,27 @@ void UpdateAllBreakEven()
         double currentSL = PositionGetDouble(POSITION_SL);
         ENUM_POSITION_TYPE posType = (ENUM_POSITION_TYPE)PositionGetInteger(POSITION_TYPE);
 
-        //--- Calculate 1R profit (BE trigger)
-        double rDistance = entryPrice * (InpSL_Percent / 100.0); // 0.70%
-        double beProfit = rDistance * InpBE_TriggerR; // 1R = 0.70%
+        //--- Get ATR value for this symbol
+        int symbolIndex = -1;
+        for(int j = 0; j < ArraySize(g_Symbols); j++)
+        {
+            if(g_Symbols[j] == symbol)
+            {
+                symbolIndex = j;
+                break;
+            }
+        }
+
+        if(symbolIndex < 0) continue;
+
+        double atr[];
+        ArraySetAsSeries(atr, true);
+        if(CopyBuffer(g_ATR_Handle[symbolIndex], 0, 0, 3, atr) < 3) continue;
+
+        double currentATR = atr[1];
+
+        //--- Calculate 1R profit (BE trigger) based on ATR
+        double beProfit = currentATR * InpBE_ATR_Multiplier; // 1.5 × ATR = 1R
 
         double currentPrice = (posType == POSITION_TYPE_BUY) ?
                               SymbolInfoDouble(symbol, SYMBOL_BID) :
@@ -466,7 +523,7 @@ void UpdateAllBreakEven()
 
         if(posType == POSITION_TYPE_BUY)
         {
-            // BUY: prix actuel >= entry + 1R
+            // BUY: prix actuel >= entry + 1R (1.5 × ATR)
             if(currentPrice >= entryPrice + beProfit && currentSL < entryPrice)
             {
                 shouldMoveToBE = true;
@@ -475,7 +532,7 @@ void UpdateAllBreakEven()
         }
         else // SELL
         {
-            // SELL: prix actuel <= entry - 1R
+            // SELL: prix actuel <= entry - 1R (1.5 × ATR)
             if(currentPrice <= entryPrice - beProfit && (currentSL > entryPrice || currentSL == 0))
             {
                 shouldMoveToBE = true;
@@ -487,7 +544,9 @@ void UpdateAllBreakEven()
         {
             if(g_Trade.PositionModify(ticket, newSL, PositionGetDouble(POSITION_TP)))
             {
-                Print(">>> BREAK EVEN activé: ", symbol, " | Ticket: ", ticket, " | SL: ", newSL);
+                double beProfitPercent = (beProfit / entryPrice) * 100.0;
+                Print(">>> BREAK EVEN activé: ", symbol, " | Ticket: ", ticket,
+                      " | SL → BE: ", newSL, " | Profit: ", DoubleToString(beProfitPercent, 2), "% (", InpBE_ATR_Multiplier, "×ATR)");
             }
         }
     }
