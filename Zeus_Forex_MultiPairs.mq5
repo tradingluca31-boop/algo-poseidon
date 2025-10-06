@@ -45,6 +45,7 @@ input double ReducedRiskMoney   = 50.0;  // Montant risqué sous série de perte
 input double InpSL_PercentOfCapital = 1.0;  // SL = 1% du capital
 input double InpTP_PercentOfCapital = 1.0;  // TP = 1% du capital
 input double InpBE_TriggerPercent  = 1.0;   // Passer BE quand +1% depuis l'entrée
+input int    InpTimeStop_Hours     = 72;    // Fermeture auto après X heures (Value=72 / Start=12 / Step=12 / Stop=168)
 
 input int    InpMaxTradesPerDay    = 3;     // Max 3 trades/jour TOTAL
 input double InpMaxDailyDD_Percent = 3.0;   // DD max journalier (pertes réalisées)
@@ -644,6 +645,30 @@ void ManageBreakEven(string sym)
    }
 }
 
+//======================== Gestion Time Stop =======================
+void ManageTimeStop(string sym)
+{
+   for(int i = PositionsTotal() - 1; i >= 0; --i)
+   {
+      ulong ticket = PositionGetTicket(i);
+      if(ticket == 0 || !PositionSelectByTicket(ticket)) continue;
+      if(PositionGetString(POSITION_SYMBOL) != sym) continue;
+      if(PositionGetInteger(POSITION_MAGIC) != InpMagic) continue;
+
+      datetime openTime = (datetime)PositionGetInteger(POSITION_TIME);
+      datetime currentTime = TimeCurrent();
+
+      int elapsedHours = (int)((currentTime - openTime) / 3600);
+
+      if(elapsedHours >= InpTimeStop_Hours)
+      {
+         Trade.PositionClose(ticket);
+         PrintFormat("[TIME STOP] %s - Position fermée après %d heures (limite: %d h)",
+                     sym, elapsedHours, InpTimeStop_Hours);
+      }
+   }
+}
+
 //======================== OnTick ==========================
 void OnTick()
 {
@@ -654,6 +679,12 @@ void OnTick()
    for(int i = 0; i < g_total_symbols; i++)
    {
       ManageBreakEven(g_symbols[i]);
+   }
+
+   // Gestion Time Stop pour toutes les positions
+   for(int i = 0; i < g_total_symbols; i++)
+   {
+      ManageTimeStop(g_symbols[i]);
    }
 
    // Scan des signaux sur toutes les paires
