@@ -44,6 +44,7 @@ input double ReducedRiskMoney   = 50.0;  // Montant risqué sous série de perte
 
 input double InpSL_PercentOfCapital = 1.0;  // SL = 1% du capital
 input double InpTP_PercentOfCapital = 1.0;  // TP = 1% du capital
+input double InpBE_TriggerPercent  = 1.0;   // Passer BE quand +1% depuis l'entrée
 
 input int    InpMaxTradesPerDay    = 3;     // Max 3 trades/jour TOTAL
 input double InpMaxDailyDD_Percent = 3.0;   // DD max journalier (pertes réalisées)
@@ -86,9 +87,6 @@ input bool InpTrade_Octobre   = true;  // Trader en Octobre
 input bool InpTrade_Novembre  = true;  // Trader en Novembre
 input bool InpTrade_Decembre  = true;  // Trader en Decembre
 //=== Month Filter Inputs END =============================================
-
-// --- Break Even ---
-input double InpBE_TriggerPercent  = 1.0;  // Passer BE quand +1% depuis l'entrée
 
 //======================== Variables Globales ========================
 datetime lastBarTime[];
