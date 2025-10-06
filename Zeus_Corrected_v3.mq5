@@ -6,13 +6,11 @@
 //|   1. RSI H4 > 80 (surachat) ou < 25 (survente)                   |
 //|   2. SMMA 200 H4 (prix au-dessus = BUY, en-dessous = SELL)       |
 //|                                                                    |
-//| SIGNAUX TECHNIQUES (H1) - 6 signaux:                              |
+//| SIGNAUX TECHNIQUES (H1) - 4 signaux:                              |
 //|   1. Cross EMA 21/55 H1                                           |
 //|   2. MACD Histogram H1 (position > 0 ou < 0)                      |
 //|   3. ADX Trending (> 25)                                          |
 //|   4. Higher Highs / Lower Lows                                    |
-//|   5. RSI H1 Momentum (> 50 ou < 50)                               |
-//|   6. RSI H1 Bounce (oversold/overbought)                          |
 //|                                                                    |
 //| RISK MANAGEMENT:                                                   |
 //|   - Risque: 0.50% du capital                                      |
@@ -59,9 +57,6 @@ input int    InpEMA_Slow = 55;                 // EMA lente H1
 input int    InpMACD_Fast = 12;                // MACD Fast EMA
 input int    InpMACD_Slow = 26;                // MACD Slow EMA
 input int    InpMACD_Signal = 9;               // MACD Signal
-input int    InpRSI_H1_Period = 14;            // Période RSI H1
-input int    InpRSI_H1_Overbought = 70;        // RSI H1 surachat
-input int    InpRSI_H1_Oversold = 30;          // RSI H1 survente
 input int    InpADX_Period = 14;               // Période ADX
 input double InpADX_TrendingThreshold = 25.0;  // ADX > 25 = Trending
 
@@ -70,7 +65,7 @@ input double InpMaxCorrelation = 0.85;         // Corrélation max autorisée
 input int    InpCorrelationPeriod = 100;       // Période calcul corrélation
 
 input group "=== SCORING ==="
-input int    InpMinSignalsRequired = 4;        // Signaux minimum requis (sur 6)
+input int    InpMinSignalsRequired = 3;        // Signaux minimum requis (sur 4)
 
 input group "=== GENERAL SETTINGS ==="
 input int    InpMagicNumber = 789456;          // Magic Number
@@ -96,7 +91,6 @@ int g_SMMA_H4_Handle[];
 int g_EMA_Fast_Handle[];
 int g_EMA_Slow_Handle[];
 int g_MACD_Handle[];
-int g_RSI_H1_Handle[];
 int g_ADX_Handle[];
 
 //--- Position tracking
@@ -128,7 +122,6 @@ int OnInit()
     ArrayResize(g_EMA_Fast_Handle, symbolCount);
     ArrayResize(g_EMA_Slow_Handle, symbolCount);
     ArrayResize(g_MACD_Handle, symbolCount);
-    ArrayResize(g_RSI_H1_Handle, symbolCount);
     ArrayResize(g_ADX_Handle, symbolCount);
 
     //--- Create indicator handles for all symbols
@@ -142,13 +135,11 @@ int OnInit()
         g_EMA_Fast_Handle[i] = iMA(g_Symbols[i], PERIOD_H1, InpEMA_Fast, 0, MODE_EMA, PRICE_CLOSE);
         g_EMA_Slow_Handle[i] = iMA(g_Symbols[i], PERIOD_H1, InpEMA_Slow, 0, MODE_EMA, PRICE_CLOSE);
         g_MACD_Handle[i] = iMACD(g_Symbols[i], PERIOD_H1, InpMACD_Fast, InpMACD_Slow, InpMACD_Signal, PRICE_CLOSE);
-        g_RSI_H1_Handle[i] = iRSI(g_Symbols[i], PERIOD_H1, InpRSI_H1_Period, PRICE_CLOSE);
         g_ADX_Handle[i] = iADX(g_Symbols[i], PERIOD_H1, InpADX_Period);
 
         bool handlesOK = (g_RSI_H4_Handle[i] != INVALID_HANDLE && g_SMMA_H4_Handle[i] != INVALID_HANDLE &&
                           g_EMA_Fast_Handle[i] != INVALID_HANDLE && g_EMA_Slow_Handle[i] != INVALID_HANDLE &&
-                          g_MACD_Handle[i] != INVALID_HANDLE && g_RSI_H1_Handle[i] != INVALID_HANDLE &&
-                          g_ADX_Handle[i] != INVALID_HANDLE);
+                          g_MACD_Handle[i] != INVALID_HANDLE && g_ADX_Handle[i] != INVALID_HANDLE);
 
         if(!handlesOK)
         {
@@ -166,7 +157,7 @@ int OnInit()
     Print("Paires surveillées: ", symbolCount);
     Print("SL: ", InpSL_Percent, "% | TP: ", InpTP_Percent, "% (RR 1:3) | BE: ", InpBE_TriggerR, "R");
     Print("Max trades/jour: ", InpMaxTradesPerDay, " | Durée max: ", InpMaxTradeHours, "H");
-    Print("Signaux requis: ", InpMinSignalsRequired, "/6");
+    Print("Signaux requis: ", InpMinSignalsRequired, "/4");
 
     return INIT_SUCCEEDED;
 }
@@ -184,7 +175,6 @@ void OnDeinit(const int reason)
         if(g_EMA_Fast_Handle[i] != INVALID_HANDLE) IndicatorRelease(g_EMA_Fast_Handle[i]);
         if(g_EMA_Slow_Handle[i] != INVALID_HANDLE) IndicatorRelease(g_EMA_Slow_Handle[i]);
         if(g_MACD_Handle[i] != INVALID_HANDLE) IndicatorRelease(g_MACD_Handle[i]);
-        if(g_RSI_H1_Handle[i] != INVALID_HANDLE) IndicatorRelease(g_RSI_H1_Handle[i]);
         if(g_ADX_Handle[i] != INVALID_HANDLE) IndicatorRelease(g_ADX_Handle[i]);
     }
 
@@ -290,17 +280,15 @@ void AnalyzeSymbol(string symbol, int symbolIndex)
     double low = iLow(symbol, PERIOD_H1, 1);
 
     //--- Get H1 indicator values
-    double ema_fast[], ema_slow[], macd_main[], rsi_h1[], adx[];
+    double ema_fast[], ema_slow[], macd_main[], adx[];
     ArraySetAsSeries(ema_fast, true);
     ArraySetAsSeries(ema_slow, true);
     ArraySetAsSeries(macd_main, true);
-    ArraySetAsSeries(rsi_h1, true);
     ArraySetAsSeries(adx, true);
 
     if(CopyBuffer(g_EMA_Fast_Handle[symbolIndex], 0, 0, 3, ema_fast) < 3) return;
     if(CopyBuffer(g_EMA_Slow_Handle[symbolIndex], 0, 0, 3, ema_slow) < 3) return;
     if(CopyBuffer(g_MACD_Handle[symbolIndex], 0, 0, 3, macd_main) < 3) return;
-    if(CopyBuffer(g_RSI_H1_Handle[symbolIndex], 0, 0, 3, rsi_h1) < 3) return;
     if(CopyBuffer(g_ADX_Handle[symbolIndex], 0, 0, 2, adx) < 2) return;
 
     double currentEMA_Fast = ema_fast[1];
@@ -308,12 +296,10 @@ void AnalyzeSymbol(string symbol, int symbolIndex)
     double currentEMA_Slow = ema_slow[1];
     double prevEMA_Slow = ema_slow[2];
     double currentMACD = macd_main[1];
-    double currentRSI_H1 = rsi_h1[1];
-    double prevRSI_H1 = rsi_h1[2];
     double currentADX = adx[1];
 
-    //--- SCORING 6 SIGNAUX TECHNIQUES (H1)
-    int signalsTotal = 6;
+    //--- SCORING 4 SIGNAUX TECHNIQUES (H1)
+    int signalsTotal = 4;
     int signalsBuy = 0, signalsSell = 0;
 
     //--- Signal 1: Cross EMA 21/55 H1
@@ -340,14 +326,6 @@ void AnalyzeSymbol(string symbol, int symbolIndex)
 
     if(high > prevHigh && low > prevLow) signalsBuy++;
     else if(high < prevHigh && low < prevLow) signalsSell++;
-
-    //--- Signal 5: RSI H1 Momentum (> 50 ou < 50)
-    if(currentRSI_H1 > 50 && currentRSI_H1 < InpRSI_H1_Overbought) signalsBuy++;
-    else if(currentRSI_H1 < 50 && currentRSI_H1 > InpRSI_H1_Oversold) signalsSell++;
-
-    //--- Signal 6: RSI H1 Bounce (oversold/overbought)
-    if(prevRSI_H1 < InpRSI_H1_Oversold && currentRSI_H1 > InpRSI_H1_Oversold) signalsBuy++;
-    else if(prevRSI_H1 > InpRSI_H1_Overbought && currentRSI_H1 < InpRSI_H1_Overbought) signalsSell++;
 
     //--- DÉCISION: Buy ou Sell selon scoring + FILTRE SMMA H4
     bool takeBuy = (signalsBuy >= InpMinSignalsRequired && smma_bullish);
