@@ -147,7 +147,7 @@ int OnInit()
 
     Print("Initialisation réussie - Balance: ", g_InitialBalance);
     Print("Paires surveillées: ", ArraySize(g_Symbols));
-    Print("SL: ", InpSL_Percent, "% | TP: ", InpTP_Percent, "% | BE: ", InpBE_TriggerR, "R");
+    Print("SL: ", InpSL_ATR_Multiplier, "×ATR | TP: ", InpTP_ATR_Multiplier, "×ATR (RR 1:3) | BE: ", InpBE_ATR_Multiplier, "×ATR");
     Print("Signaux requis: ", InpMinSignalsRequired, "/10");
 
     return INIT_SUCCEEDED;
