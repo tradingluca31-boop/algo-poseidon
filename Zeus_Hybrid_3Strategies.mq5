@@ -5,7 +5,7 @@
 //| Stratégie 1: Daily Range Breakout (DRB)                          |
 //| Stratégie 2: Mean Reversion avec ATR                             |
 //| Stratégie 3: Adaptive Risk + Trailing Stop                       |
-//| Seuil: 7/10 signaux minimum requis                               |
+//| Seuil: 70% des conditions doivent être remplies                  |
 //+------------------------------------------------------------------+
 #property copyright "Zeus Trading System"
 #property version   "1.00"
@@ -17,27 +17,23 @@
 input group "=== FTMO RISK MANAGEMENT ==="
 input double InpRiskPerTrade = 0.30;           // Risque par trade (%)
 input double InpMaxSimultaneousRisk = 3.0;     // Risque simultané max (%)
-input double InpMaxDailyLoss = 3.0;            // Perte quotidienne max (%) - LIMITE DURE
+input double InpMaxDailyLoss = 3.0;            // Perte quotidienne max (%)
+input double InpMaxDrawdown = 8.0;             // Drawdown max (%)
 input int    InpMaxPositions = 10;             // Positions simultanées max
-// Note: Objectif DD total < 8% (pas une limite, juste un goal de performance)
 
 input group "=== STRATEGY 1: DAILY RANGE BREAKOUT ==="
 input int    InpDRB_StartHour = 0;             // Heure début calcul range
 input int    InpDRB_EndHour = 6;               // Heure fin calcul range
 input int    InpDRB_TradingStartHour = 6;      // Heure début trading
 input int    InpDRB_TradingEndHour = 22;       // Heure fin trading
-input double InpDRB_RiskReward = 3.0;          // Risk:Reward ratio (1:3) - OPTIMISER: 2.0-5.0
+input double InpDRB_RiskReward = 5.0;          // Risk:Reward ratio (1:5)
 input double InpDRB_BreakoutBuffer = 5.0;      // Buffer breakout (points)
-input bool   InpDRB_RequirePullback = true;    // Exiger pullback après breakout
 
 input group "=== STRATEGY 2: MEAN REVERSION ATR ==="
 input int    InpMR_EMAPeriod = 200;            // Période EMA
 input int    InpMR_ATRPeriod = 14;             // Période ATR
-input double InpMR_ATRMultiplier = 2.0;        // Multiplicateur ATR pour bandes
+input double InpMR_ATRMultiplier = 2.0;        // Multiplicateur ATR
 input double InpMR_MinATR = 0.0001;            // ATR minimum
-input double InpMR_ATRAdaptiveMin = 2.5;       // ATR adaptatif Min - OPTIMISER: 2.0-4.0
-input double InpMR_ATRAdaptiveMax = 4.0;       // ATR adaptatif Max - OPTIMISER: 3.0-5.0
-input double InpMR_SLMultiplier = 3.0;         // Multiplicateur ATR pour SL - OPTIMISER: 2.5-4.0
 
 input group "=== SIGNAUX TECHNIQUES ==="
 input int    InpRSI_Period = 14;               // Période RSI
@@ -54,55 +50,14 @@ input double InpTS_Phase3_Profit = 3.0;        // Phase 3: % profit pour trailin
 input double InpTS_ATRMultiplier = 2.0;        // Multiplicateur ATR pour distance
 
 input group "=== CORRELATION & EXPOSURE ==="
-input double InpMaxCorrelation = 0.85;         // Corrélation max autorisée - OPTIMISER: 0.75-0.90 (step 0.05)
+input double InpMaxCorrelation = 0.80;         // Corrélation max autorisée
 input int    InpCorrelationPeriod = 100;       // Période calcul corrélation
 input ENUM_TIMEFRAMES InpCorrelationTF = PERIOD_H1; // Timeframe corrélation
-
-input group "=== VOLATILITY REGIME (Amélioration #1) ==="
-input bool   InpVolRegime_Enabled = true;      // Activer détection volatilité
-input int    InpVolRegime_Period = 100;        // Période calcul percentile ATR
-input double InpVolRegime_LowThreshold = 30.0; // Seuil Low (percentile)
-input double InpVolRegime_HighThreshold = 70.0;// Seuil High (percentile)
-input double InpVolRegime_ExtremeThreshold = 95.0; // Seuil Extreme (skip trades) - OPTIMISER: 90-99
-
-input group "=== TIME-BASED FILTERS (Amélioration #2) ==="
-input bool   InpTimeFilter_Enabled = true;     // Activer filtres horaires
-input bool   InpTimeFilter_AvoidLunchTime = false; // Éviter 12h-14h (low volume) - OPTIMISER: true/false
-input bool   InpTimeFilter_AvoidAsianNight = true; // Éviter 22h-2h (flat) - OPTIMISER: true/false
-
-input group "=== EQUITY CURVE MONITORING (Amélioration #6) ==="
-input bool   InpEquityCurve_Enabled = false;   // Activer monitoring equity curve - DÉSACTIVÉ pour backtest
-input int    InpEquityCurve_LookbackTrades = 20; // Trades pour calcul slope
-input int    InpEquityCurve_PauseDaysNegSlope = 1; // Pause si slope négatif (jours) - OPTIMISER: 1-3
-input int    InpEquityCurve_PauseDaysLosingStreak = 1; // Pause si 10 pertes (jours)
-
-input group "=== MARKET REGIME ADX (Amélioration #7) ==="
-input bool   InpADX_Enabled = true;            // Activer détection ADX
-input int    InpADX_Period = 14;               // Période ADX
-input double InpADX_TrendingThreshold = 25.0;  // ADX > 25 = Trending
-input double InpADX_RangingThreshold = 20.0;   // ADX < 20 = Ranging
-
-input group "=== ML SIGNAL STRENGTH (Amélioration #9) ==="
-input bool   InpML_Enabled = true;             // Activer ML tracking signaux
-input int    InpML_RecalibrationTrades = 100;  // Recalibrer tous les X trades
-
-input group "=== NEWS FILTER (Amélioration #10) ==="
-input bool   InpNews_Enabled = false;          // Activer filtre news - DÉSACTIVÉ pour backtest (pas de données historiques)
-input int    InpNews_PauseBeforeMinutes = 10;  // Pause avant news (minutes) - OPTIMISER: 5-15
-input int    InpNews_PauseAfterMinutes = 20;   // Pause après news (minutes) - OPTIMISER: 15-30
-input int    InpNews_MinImportance = 3;        // Importance min (1=Low, 2=Medium, 3=High) - OPTIMISER: 2-3
-input int    InpNews_UpdateIntervalHours = 6;  // Update news cache (heures)
-
-input group "=== SCORING SIGNALS ==="
-input int    InpMinSignalsRequired = 6;        // Signaux minimum requis - OPTIMISER: 5-8 (step 1)
 
 input group "=== GENERAL SETTINGS ==="
 input int    InpMagicNumber = 789456;          // Magic Number
 input string InpTradeComment = "Zeus_Hybrid";  // Commentaire trades
 input bool   InpVerboseLogs = true;            // Logs détaillés
-input double InpMaxSpreadATR = 2.0;            // Spread max en ATR
-input bool   InpPartialExit = true;            // Sorties partielles activées
-input double InpPartialExitPercent = 50.0;     // % position à clôturer (TP1)
 
 //--- Currency pairs
 string g_Symbols[] = {"EURUSD", "GBPUSD", "USDJPY", "USDCHF", "AUDUSD", "NZDUSD", "USDCAD"};
@@ -112,42 +67,14 @@ CTrade g_Trade;
 datetime g_LastBarTime = 0;
 datetime g_DailyResetTime = 0;
 double g_DailyPnL = 0.0;
-double g_DailyStartBalance = 0.0;
 double g_InitialBalance = 0.0;
 double g_PeakBalance = 0.0;
-int g_ConsecutiveLosses = 0;
-int g_ConsecutiveWins = 0;
-
-//--- Amélioration #6: Equity Curve
-double g_EquityCurve[];
-int g_EquityCurveIndex = 0;
-datetime g_PauseUntilTime = 0;
-
-//--- Amélioration #9: ML Signal Strength
-int g_SignalCorrect[10];    // Compteur signaux corrects
-int g_SignalTotal[10];      // Compteur signaux totaux
-double g_SignalWeight[10];  // Poids adaptatifs
-
-//--- Amélioration #8: Correlation Matrix
-string g_OpenedCurrencies[];
-int g_CurrencyCount[];
-
-//--- Amélioration #10: News Cache
-struct NewsEvent {
-    datetime time;
-    string currency;
-    string title;
-    int importance;  // 1=Low, 2=Medium, 3=High
-};
-NewsEvent g_NewsEvents[];
-datetime g_NewsLastUpdate = 0;
 
 //--- Indicator handles
 int g_EMA_Handle[];
 int g_ATR_Handle[];
 int g_RSI_Handle[];
 int g_MACD_Handle[];
-int g_ADX_Handle[];  // Amélioration #7
 
 //--- Structures
 struct DailyRangeData {
@@ -187,23 +114,7 @@ int OnInit()
     ArrayResize(g_ATR_Handle, ArraySize(g_Symbols));
     ArrayResize(g_RSI_Handle, ArraySize(g_Symbols));
     ArrayResize(g_MACD_Handle, ArraySize(g_Symbols));
-    ArrayResize(g_ADX_Handle, ArraySize(g_Symbols));
     ArrayResize(g_DailyRange, ArraySize(g_Symbols));
-
-    //--- Initialize Equity Curve
-    if(InpEquityCurve_Enabled)
-    {
-        ArrayResize(g_EquityCurve, InpEquityCurve_LookbackTrades);
-        ArrayInitialize(g_EquityCurve, 0);
-    }
-
-    //--- Initialize ML Signal Weights
-    if(InpML_Enabled)
-    {
-        ArrayInitialize(g_SignalCorrect, 0);
-        ArrayInitialize(g_SignalTotal, 0);
-        ArrayInitialize(g_SignalWeight, 1.0); // Poids initial = 1.0
-    }
 
     //--- Create indicator handles for all symbols
     for(int i = 0; i < ArraySize(g_Symbols); i++)
@@ -212,16 +123,9 @@ int OnInit()
         g_ATR_Handle[i] = iATR(g_Symbols[i], PERIOD_CURRENT, InpMR_ATRPeriod);
         g_RSI_Handle[i] = iRSI(g_Symbols[i], PERIOD_CURRENT, InpRSI_Period, PRICE_CLOSE);
         g_MACD_Handle[i] = iMACD(g_Symbols[i], PERIOD_CURRENT, InpMACD_Fast, InpMACD_Slow, InpMACD_Signal, PRICE_CLOSE);
-        if(InpADX_Enabled)
-            g_ADX_Handle[i] = iADX(g_Symbols[i], PERIOD_CURRENT, InpADX_Period);
 
-        bool handlesOK = (g_EMA_Handle[i] != INVALID_HANDLE && g_ATR_Handle[i] != INVALID_HANDLE &&
-                          g_RSI_Handle[i] != INVALID_HANDLE && g_MACD_Handle[i] != INVALID_HANDLE);
-
-        if(InpADX_Enabled)
-            handlesOK = handlesOK && (g_ADX_Handle[i] != INVALID_HANDLE);
-
-        if(!handlesOK)
+        if(g_EMA_Handle[i] == INVALID_HANDLE || g_ATR_Handle[i] == INVALID_HANDLE ||
+           g_RSI_Handle[i] == INVALID_HANDLE || g_MACD_Handle[i] == INVALID_HANDLE)
         {
             Print("ERREUR: Impossible de créer les indicateurs pour ", g_Symbols[i]);
             return INIT_FAILED;
@@ -234,13 +138,12 @@ int OnInit()
 
     //--- Initialize balance tracking
     g_InitialBalance = AccountInfoDouble(ACCOUNT_BALANCE);
-    g_DailyStartBalance = g_InitialBalance;
     g_PeakBalance = g_InitialBalance;
     g_DailyResetTime = TimeCurrent();
 
     Print("Initialisation réussie - Balance: ", g_InitialBalance);
     Print("Paires surveillées: ", ArraySize(g_Symbols));
-    Print("Seuil validation: 7/10 signaux minimum");
+    Print("Seuil conditions: 70% (7/10 minimum)");
 
     return INIT_SUCCEEDED;
 }
@@ -275,15 +178,11 @@ void OnTick()
     //--- Daily reset
     CheckDailyReset();
 
-    //--- TOUJOURS update trailing stops (même si daily loss atteint)
-    UpdateAllTrailingStops();
+    //--- FTMO checks
+    if(!CheckFTMOLimits()) return;
 
-    //--- FTMO checks pour NOUVEAUX trades seulement
-    if(!CheckFTMOLimits())
-    {
-        if(InpVerboseLogs) Print("FTMO Limits atteintes - Pas de nouveaux trades, positions existantes maintenues");
-        return; // Bloque nouveaux trades mais trailing continue
-    }
+    //--- Update trailing stops for all positions
+    UpdateAllTrailingStops();
 
     //--- Scan all symbols for trading opportunities
     for(int i = 0; i < ArraySize(g_Symbols); i++)
@@ -311,25 +210,10 @@ void AnalyzeSymbol(string symbol, int symbolIndex)
         return;
     }
 
-    //--- Filtre 2b: Time-Based Session Filter (Amélioration #2)
-    if(!CheckTimeFilter()) return;
-
-    //--- Filtre 2c: Equity Curve Pause (Amélioration #6)
-    if(!CheckEquityPause()) return;
-
-    //--- Filtre 2d: News Filter (Amélioration #10)
-    if(!CheckNewsFilter()) return;
-
     //--- Filtre 3: Corrélation
     if(!CheckCorrelationExposure(symbol))
     {
         if(InpVerboseLogs) Print("Filtre CORRELATION échoué: ", symbol);
-        return;
-    }
-
-    //--- Filtre 3b: Currency Diversification (Amélioration #8)
-    if(!CheckCurrencyDiversification(symbol))
-    {
         return;
     }
 
@@ -369,23 +253,10 @@ void AnalyzeSymbol(string symbol, int symbolIndex)
         return;
     }
 
-    //--- Filtre 4b: Spread check
-    double ask = SymbolInfoDouble(symbol, SYMBOL_ASK);
-    double bid = SymbolInfoDouble(symbol, SYMBOL_BID);
-    double spread = ask - bid;
-    double maxSpread = currentATR * InpMaxSpreadATR;
-
-    if(spread > maxSpread)
+    //--- Filtre 5: Drawdown sous contrôle (80% du max)
+    if(CalculateCurrentDrawdown() >= InpMaxDrawdown * 0.8)
     {
-        if(InpVerboseLogs) Print("Filtre SPREAD échoué: ", symbol, " Spread=", spread, " Max=", maxSpread);
-        return;
-    }
-
-    //--- Filtre 5: Daily Loss sous contrôle (80% du max quotidien)
-    double dailyLossPercent = (g_DailyPnL / g_DailyStartBalance) * 100.0;
-    if(dailyLossPercent <= -(InpMaxDailyLoss * 0.8)) // -2.4% si max = 3%
-    {
-        if(InpVerboseLogs) Print("Filtre DAILY LOSS échoué: ", symbol, " Daily P&L: ", DoubleToString(dailyLossPercent, 2), "%");
+        if(InpVerboseLogs) Print("Filtre DRAWDOWN échoué: ", symbol);
         return;
     }
 
@@ -396,64 +267,22 @@ void AnalyzeSymbol(string symbol, int symbolIndex)
         return;
     }
 
-    //--- Amélioration #1: Volatility Regime Detection
-    string volRegime = CalculateVolatilityRegime(symbolIndex);
-    if(volRegime == "EXTREME")
-    {
-        if(InpVerboseLogs) Print("Filtre VOL REGIME: EXTREME (>90 percentile) - Skip trade");
-        return;
-    }
-
-    //--- Amélioration #7: Market Regime Detection (ADX)
-    string marketRegime = DetectMarketRegime(symbolIndex);
-
-    if(InpVerboseLogs) Print(">>> ", symbol, " - TOUS FILTRES PASSÉS - Vol:", volRegime, " Market:", marketRegime);
+    if(InpVerboseLogs) Print(">>> ", symbol, " - TOUS FILTRES PASSÉS - Analyse signaux...");
 
     //--- SIGNAUX POUR SCORING 70% (10 signaux techniques)
     int signalsTotal = 10;
     int signalsBuy = 0, signalsSell = 0;
 
-    //--- Signal 1: Daily Range Breakout (Stratégie 1) avec confirmation pullback
+    //--- Signal 1: Daily Range Breakout (Stratégie 1)
     double highBreakout = g_DailyRange[symbolIndex].highPrice + InpDRB_BreakoutBuffer * _Point;
     double lowBreakout = g_DailyRange[symbolIndex].lowPrice - InpDRB_BreakoutBuffer * _Point;
 
-    bool bullishBreakout = false;
-    bool bearishBreakout = false;
+    if(close > highBreakout) signalsBuy++;
+    else if(close < lowBreakout) signalsSell++;
 
-    if(InpDRB_RequirePullback)
-    {
-        // Breakout haussier avec pullback: prix a cassé, puis pullback vers le niveau
-        if(high > highBreakout && close < high && close > highBreakout - (currentATR * 0.5))
-            bullishBreakout = true;
-        // Breakout baissier avec pullback
-        if(low < lowBreakout && close > low && close < lowBreakout + (currentATR * 0.5))
-            bearishBreakout = true;
-    }
-    else
-    {
-        if(close > highBreakout) bullishBreakout = true;
-        if(close < lowBreakout) bearishBreakout = true;
-    }
-
-    if(bullishBreakout) signalsBuy++;
-    else if(bearishBreakout) signalsSell++;
-
-    //--- Signal 2: Mean Reversion ATR adaptatif (Stratégie 2)
-    // Calculer ATR adaptatif basé sur la volatilité récente
-    double atrAdaptiveMultiplier = InpMR_ATRMultiplier;
-    if(atr[1] > atr[2] && atr[2] > atr[3])
-    {
-        // Volatilité croissante = élargir les bandes
-        atrAdaptiveMultiplier = InpMR_ATRAdaptiveMax;
-    }
-    else if(atr[1] < atr[2] && atr[2] < atr[3])
-    {
-        // Volatilité décroissante = resserrer les bandes
-        atrAdaptiveMultiplier = InpMR_ATRAdaptiveMin;
-    }
-
-    double upperBand = currentEMA + (currentATR * atrAdaptiveMultiplier);
-    double lowerBand = currentEMA - (currentATR * atrAdaptiveMultiplier);
+    //--- Signal 2: Mean Reversion ATR (Stratégie 2)
+    double upperBand = currentEMA + (currentATR * InpMR_ATRMultiplier);
+    double lowerBand = currentEMA - (currentATR * InpMR_ATRMultiplier);
 
     if(close < lowerBand) signalsBuy++;      // Prix bas = buy mean reversion
     else if(close > upperBand) signalsSell++; // Prix haut = sell mean reversion
@@ -496,72 +325,57 @@ void AnalyzeSymbol(string symbol, int symbolIndex)
     if(close > rangeCenter) signalsBuy++;
     else if(close < rangeCenter) signalsSell++;
 
-    //--- EVALUATE THRESHOLD (configurable via InpMinSignalsRequired)
+    //--- EVALUATE 70% THRESHOLD
+    double buyRate = (double)signalsBuy / (double)signalsTotal;
+    double sellRate = (double)signalsSell / (double)signalsTotal;
+
     if(InpVerboseLogs)
     {
         Print("=== ", symbol, " === Signaux BUY: ", signalsBuy, "/", signalsTotal,
-              " | SELL: ", signalsSell, "/", signalsTotal);
+              " (", DoubleToString(buyRate * 100, 1), "%) | SELL: ", signalsSell, "/", signalsTotal,
+              " (", DoubleToString(sellRate * 100, 1), "%)");
     }
 
-    //--- Execute trade si >= seuil signaux avec position sizing adaptatif
-    if(signalsBuy >= InpMinSignalsRequired)
+    //--- Execute trade si >= 70% (7/10 signaux)
+    if(buyRate >= 0.70)
     {
-        Print(">>> SIGNAL BUY validé - ", symbol, " avec ", signalsBuy, "/", signalsTotal, " signaux");
-        OpenPosition(symbol, ORDER_TYPE_BUY, currentATR, close, atrAdaptiveMultiplier, volRegime);
+        Print(">>> SIGNAL BUY validé - ", symbol, " avec ", DoubleToString(buyRate * 100, 1), "% des signaux");
+        OpenPosition(symbol, ORDER_TYPE_BUY, currentATR, close);
     }
-    else if(signalsSell >= InpMinSignalsRequired)
+    else if(sellRate >= 0.70)
     {
-        Print(">>> SIGNAL SELL validé - ", symbol, " avec ", signalsSell, "/", signalsTotal, " signaux");
-        OpenPosition(symbol, ORDER_TYPE_SELL, currentATR, close, atrAdaptiveMultiplier, volRegime);
+        Print(">>> SIGNAL SELL validé - ", symbol, " avec ", DoubleToString(sellRate * 100, 1), "% des signaux");
+        OpenPosition(symbol, ORDER_TYPE_SELL, currentATR, close);
     }
     else
     {
-        if(InpVerboseLogs) Print("Seuil ", InpMinSignalsRequired, "/", signalsTotal, " non atteint pour ", symbol);
+        if(InpVerboseLogs) Print("Seuil 70% non atteint pour ", symbol);
     }
 }
 
 //+------------------------------------------------------------------+
 //| Open position with risk management                               |
 //+------------------------------------------------------------------+
-void OpenPosition(string symbol, ENUM_ORDER_TYPE orderType, double atr, double price, double atrMultiplier, string volRegime)
+void OpenPosition(string symbol, ENUM_ORDER_TYPE orderType, double atr, double price)
 {
-    //--- Position sizing adaptatif selon losing streak
-    double riskPercent = InpRiskPerTrade;
-    if(g_ConsecutiveLosses >= 3)
-    {
-        riskPercent = InpRiskPerTrade * 0.5; // Réduire risque de 50% après 3 pertes
-        if(InpVerboseLogs) Print("Risque réduit à ", riskPercent, "% (losing streak: ", g_ConsecutiveLosses, ")");
-    }
+    //--- Calculate position size
+    double riskAmount = AccountInfoDouble(ACCOUNT_BALANCE) * (InpRiskPerTrade / 100.0);
 
-    //--- Amélioration #1: Adjust risk based on volatility regime
-    riskPercent = GetVolatilityAdjustedRisk(volRegime, riskPercent);
-    if(riskPercent == 0.0)
-    {
-        Print("Vol regime EXTREME - Trade skipped");
-        return;
-    }
-
-    if(InpVerboseLogs) Print("Risk adjusted for ", volRegime, " regime: ", DoubleToString(riskPercent, 3), "%");
-
-    double riskAmount = AccountInfoDouble(ACCOUNT_BALANCE) * (riskPercent / 100.0);
-
-    //--- Calculate SL/TP based on ATR adaptatif
-    double slDistance = atr * InpMR_SLMultiplier;  // SL séparé du multiplicateur bandes
+    //--- Calculate SL/TP based on ATR and RR ratio
+    double slDistance = atr * InpMR_ATRMultiplier;
     double tpDistance = slDistance * InpDRB_RiskReward;
 
-    double sl = 0, tp = 0, tp1 = 0;
+    double sl = 0, tp = 0;
 
     if(orderType == ORDER_TYPE_BUY)
     {
         sl = price - slDistance;
         tp = price + tpDistance;
-        tp1 = price + (tpDistance * 0.3); // TP1 à 30% du chemin (1:1.5 environ)
     }
     else if(orderType == ORDER_TYPE_SELL)
     {
         sl = price + slDistance;
         tp = price - tpDistance;
-        tp1 = price - (tpDistance * 0.3); // TP1 à 30% du chemin
     }
 
     //--- Calculate lot size
@@ -579,69 +393,24 @@ void OpenPosition(string symbol, ENUM_ORDER_TYPE orderType, double atr, double p
     lotSize = MathFloor(lotSize / lotStep) * lotStep;
     lotSize = MathMax(minLot, MathMin(maxLot, lotSize));
 
-    //--- Execute order avec sorties partielles
+    //--- Execute order
     bool result = false;
 
-    if(InpPartialExit)
+    if(orderType == ORDER_TYPE_BUY)
     {
-        // Ouvrir 2 positions pour permettre sortie partielle
-        double lot1 = lotSize * (InpPartialExitPercent / 100.0);
-        double lot2 = lotSize - lot1;
+        result = g_Trade.Buy(lotSize, symbol, 0, sl, tp, InpTradeComment);
+    }
+    else if(orderType == ORDER_TYPE_SELL)
+    {
+        result = g_Trade.Sell(lotSize, symbol, 0, sl, tp, InpTradeComment);
+    }
 
-        lot1 = MathFloor(lot1 / lotStep) * lotStep;
-        lot2 = MathFloor(lot2 / lotStep) * lotStep;
-
-        if(lot1 >= minLot && lot2 >= minLot)
-        {
-            // Position 1: TP rapproché (30% du chemin)
-            if(orderType == ORDER_TYPE_BUY)
-                result = g_Trade.Buy(lot1, symbol, 0, sl, tp1, InpTradeComment + "_TP1");
-            else
-                result = g_Trade.Sell(lot1, symbol, 0, sl, tp1, InpTradeComment + "_TP1");
-
-            // Position 2: TP final
-            if(result)
-            {
-                if(orderType == ORDER_TYPE_BUY)
-                    g_Trade.Buy(lot2, symbol, 0, sl, tp, InpTradeComment + "_TP2");
-                else
-                    g_Trade.Sell(lot2, symbol, 0, sl, tp, InpTradeComment + "_TP2");
-
-                Print(">>> ORDRES OUVERTS (Partial Exit): ", symbol, " | Type: ", EnumToString(orderType),
-                      " | Lot1: ", lot1, " (TP1: ", tp1, ") | Lot2: ", lot2, " (TP2: ", tp, ") | SL: ", sl);
-            }
-        }
-        else
-        {
-            // Lot trop petit pour split, position unique
-            if(orderType == ORDER_TYPE_BUY)
-                result = g_Trade.Buy(lotSize, symbol, 0, sl, tp, InpTradeComment);
-            else
-                result = g_Trade.Sell(lotSize, symbol, 0, sl, tp, InpTradeComment);
-
-            if(result)
-            {
-                Print(">>> ORDRE OUVERT: ", symbol, " | Type: ", EnumToString(orderType),
-                      " | Lot: ", lotSize, " | SL: ", sl, " | TP: ", tp);
-            }
-        }
+    if(result)
+    {
+        Print(">>> ORDRE OUVERT: ", symbol, " | Type: ", EnumToString(orderType),
+              " | Lot: ", lotSize, " | SL: ", sl, " | TP: ", tp);
     }
     else
-    {
-        // Pas de sortie partielle
-        if(orderType == ORDER_TYPE_BUY)
-            result = g_Trade.Buy(lotSize, symbol, 0, sl, tp, InpTradeComment);
-        else
-            result = g_Trade.Sell(lotSize, symbol, 0, sl, tp, InpTradeComment);
-
-        if(result)
-        {
-            Print(">>> ORDRE OUVERT: ", symbol, " | Type: ", EnumToString(orderType),
-                  " | Lot: ", lotSize, " | SL: ", sl, " | TP: ", tp);
-        }
-    }
-
-    if(!result)
     {
         Print("ERREUR ouverture ordre: ", symbol, " - ", g_Trade.ResultRetcodeDescription());
     }
@@ -663,31 +432,66 @@ void UpdateDailyRange(string symbol, int symbolIndex)
     if(g_DailyRange[symbolIndex].calculatedDate == today && g_DailyRange[symbolIndex].isValid)
         return;
 
-    //--- Calculate range only after end hour
+    //--- CORRECTION: Permettre calcul dès que range période est terminée
+    // On peut trader même pendant la période de range (0h-6h), on utilise le range d'hier
+    datetime startTime, endTime;
+
     if(dt.hour < InpDRB_EndHour)
     {
+        // Avant 6h: utiliser le range d'hier
+        MqlDateTime dtYesterday = dt;
+        dtYesterday.day -= 1;
+        datetime yesterday = StructToTime(dtYesterday);
+        TimeToStruct(yesterday, dtYesterday);
+
+        startTime = StringToTime(IntegerToString(dtYesterday.year) + "." +
+                                 IntegerToString(dtYesterday.mon) + "." +
+                                 IntegerToString(dtYesterday.day) + " " +
+                                 IntegerToString(InpDRB_StartHour) + ":00");
+
+        endTime = StringToTime(IntegerToString(dtYesterday.year) + "." +
+                               IntegerToString(dtYesterday.mon) + "." +
+                               IntegerToString(dtYesterday.day) + " " +
+                               IntegerToString(InpDRB_EndHour) + ":00");
+    }
+    else
+    {
+        // Après 6h: utiliser le range d'aujourd'hui
+        startTime = StringToTime(IntegerToString(dt.year) + "." +
+                                 IntegerToString(dt.mon) + "." +
+                                 IntegerToString(dt.day) + " " +
+                                 IntegerToString(InpDRB_StartHour) + ":00");
+
+        endTime = StringToTime(IntegerToString(dt.year) + "." +
+                               IntegerToString(dt.mon) + "." +
+                               IntegerToString(dt.day) + " " +
+                               IntegerToString(InpDRB_EndHour) + ":00");
+    }
+
+    //--- CORRECTION MQL5: Utiliser CopyHigh/CopyLow au lieu de iBarShift
+    double highPrices[], lowPrices[];
+    ArraySetAsSeries(highPrices, true);
+    ArraySetAsSeries(lowPrices, true);
+
+    int copied = CopyHigh(symbol, PERIOD_H1, startTime, endTime, highPrices);
+    if(copied <= 0)
+    {
+        if(InpVerboseLogs) Print("Erreur CopyHigh pour ", symbol, " - copied=", copied);
         g_DailyRange[symbolIndex].isValid = false;
         return;
     }
 
-    //--- Find high and low between start and end hours
-    datetime startTime = StringToTime(IntegerToString(dt.year) + "." +
-                                       IntegerToString(dt.mon) + "." +
-                                       IntegerToString(dt.day) + " " +
-                                       IntegerToString(InpDRB_StartHour) + ":00");
+    copied = CopyLow(symbol, PERIOD_H1, startTime, endTime, lowPrices);
+    if(copied <= 0)
+    {
+        if(InpVerboseLogs) Print("Erreur CopyLow pour ", symbol, " - copied=", copied);
+        g_DailyRange[symbolIndex].isValid = false;
+        return;
+    }
 
-    datetime endTime = StringToTime(IntegerToString(dt.year) + "." +
-                                     IntegerToString(dt.mon) + "." +
-                                     IntegerToString(dt.day) + " " +
-                                     IntegerToString(InpDRB_EndHour) + ":00");
-
-    int startBar = iBarShift(symbol, PERIOD_H1, startTime);
-    int endBar = iBarShift(symbol, PERIOD_H1, endTime);
-
-    if(startBar < 0 || endBar < 0) return;
-
-    double rangeHigh = iHigh(symbol, PERIOD_H1, iHighest(symbol, PERIOD_H1, MODE_HIGH, startBar - endBar, endBar));
-    double rangeLow = iLow(symbol, PERIOD_H1, iLowest(symbol, PERIOD_H1, MODE_LOW, startBar - endBar, endBar));
+    //--- Trouver le plus haut et le plus bas
+    double rangeHigh = highPrices[ArrayMaximum(highPrices)];
+    double rangeLow = lowPrices[ArrayMinimum(lowPrices)];
 
     g_DailyRange[symbolIndex].highPrice = rangeHigh;
     g_DailyRange[symbolIndex].lowPrice = rangeLow;
@@ -697,8 +501,9 @@ void UpdateDailyRange(string symbol, int symbolIndex)
 
     if(InpVerboseLogs)
     {
-        Print("Daily Range calculé pour ", symbol, ": High=", rangeHigh, " Low=", rangeLow,
-              " Size=", g_DailyRange[symbolIndex].rangeSize);
+        Print("Daily Range calculé pour ", symbol, ": High=", DoubleToString(rangeHigh, 5),
+              " Low=", DoubleToString(rangeLow, 5),
+              " Size=", DoubleToString(g_DailyRange[symbolIndex].rangeSize, 5));
     }
 }
 
@@ -807,19 +612,20 @@ bool CheckFTMOLimits()
 {
     double balance = AccountInfoDouble(ACCOUNT_BALANCE);
 
-    //--- Daily loss check (calculé sur balance début journée) - BLOQUE NOUVEAUX TRADES
-    double dailyLossPercent = (g_DailyPnL / g_DailyStartBalance) * 100.0;
+    //--- Daily loss check
+    double dailyLossPercent = (g_DailyPnL / balance) * 100.0;
     if(dailyLossPercent <= -InpMaxDailyLoss)
     {
-        Print("⚠️ DAILY LOSS LIMIT ATTEINT (", DoubleToString(dailyLossPercent, 2), "%) - Nouveaux trades bloqués, positions existantes maintenues");
-        return false; // Bloque nouveaux trades, trailing continue
+        Print("FTMO STOP: DAILY LOSS LIMIT ATTEINT (", DoubleToString(dailyLossPercent, 2), "%)");
+        return false;
     }
 
-    //--- Drawdown total monitoring (objectif < 8%, pas une limite)
+    //--- Drawdown check
     double currentDD = CalculateCurrentDrawdown();
-    if(InpVerboseLogs && currentDD > 5.0)
+    if(currentDD >= InpMaxDrawdown)
     {
-        Print("INFO: Drawdown total actuel: ", DoubleToString(currentDD, 2), "% (Objectif: < 8%)");
+        Print("FTMO STOP: DRAWDOWN MAX ATTEINT (", DoubleToString(currentDD, 2), "%)");
+        return false;
     }
 
     //--- Max positions check
@@ -995,435 +801,14 @@ void CheckDailyReset()
 
     if(today > g_DailyResetTime)
     {
-        double currentBalance = AccountInfoDouble(ACCOUNT_BALANCE);
-        g_DailyStartBalance = currentBalance; // Balance début journée
         g_DailyPnL = 0.0;
         g_DailyResetTime = today;
 
         Print("===== RESET QUOTIDIEN - Nouvelle journée de trading =====");
-        Print("Balance début journée: ", g_DailyStartBalance);
     }
 
     //--- Update daily P&L
     double currentBalance = AccountInfoDouble(ACCOUNT_BALANCE);
-    g_DailyPnL = currentBalance - g_DailyStartBalance; // P&L depuis début journée
-}
-
-//+------------------------------------------------------------------+
-//| Track wins/losses for adaptive position sizing                   |
-//+------------------------------------------------------------------+
-void OnTradeTransaction(const MqlTradeTransaction& trans,
-                        const MqlTradeRequest& request,
-                        const MqlTradeResult& result)
-{
-    if(trans.type == TRADE_TRANSACTION_DEAL_ADD)
-    {
-        ulong dealTicket = trans.deal;
-        if(dealTicket > 0)
-        {
-            if(HistoryDealSelect(dealTicket))
-            {
-                long dealMagic = HistoryDealGetInteger(dealTicket, DEAL_MAGIC);
-                if(dealMagic == InpMagicNumber)
-                {
-                    long dealEntry = HistoryDealGetInteger(dealTicket, DEAL_ENTRY);
-                    if(dealEntry == DEAL_ENTRY_OUT) // Position fermée
-                    {
-                        double profit = HistoryDealGetDouble(dealTicket, DEAL_PROFIT);
-
-                        if(profit > 0)
-                        {
-                            g_ConsecutiveWins++;
-                            g_ConsecutiveLosses = 0;
-                            Print("Trade WIN - Série gagnante: ", g_ConsecutiveWins);
-                        }
-                        else if(profit < 0)
-                        {
-                            g_ConsecutiveLosses++;
-                            g_ConsecutiveWins = 0;
-                            Print("Trade LOSS - Série perdante: ", g_ConsecutiveLosses);
-                        }
-
-                        //--- Update Equity Curve (#6)
-                        if(InpEquityCurve_Enabled)
-                        {
-                            UpdateEquityCurve(profit);
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
-
-//+------------------------------------------------------------------+
-//| AMÉLIORATION #1: Calculate ATR Volatility Regime                |
-//+------------------------------------------------------------------+
-string CalculateVolatilityRegime(int symbolIndex)
-{
-    if(!InpVolRegime_Enabled) return "NORMAL";
-
-    double atr[];
-    ArraySetAsSeries(atr, true);
-
-    if(CopyBuffer(g_ATR_Handle[symbolIndex], 0, 0, InpVolRegime_Period, atr) < InpVolRegime_Period)
-        return "NORMAL";
-
-    //--- Calculate percentile of current ATR
-    double currentATR = atr[0];
-    double sorted[];
-    ArrayResize(sorted, InpVolRegime_Period);
-    ArrayCopy(sorted, atr, 0, 0, InpVolRegime_Period);
-    ArraySort(sorted);
-
-    int rank = 0;
-    for(int i = 0; i < InpVolRegime_Period; i++)
-    {
-        if(currentATR >= sorted[i]) rank++;
-    }
-
-    double percentile = (double)rank / (double)InpVolRegime_Period * 100.0;
-
-    //--- Classify regime
-    if(percentile >= InpVolRegime_ExtremeThreshold)
-        return "EXTREME";  // > 90 = Skip trades
-    else if(percentile >= InpVolRegime_HighThreshold)
-        return "HIGH";     // 70-90 = High volatility
-    else if(percentile <= InpVolRegime_LowThreshold)
-        return "LOW";      // < 30 = Low volatility
-    else
-        return "NORMAL";   // 30-70 = Normal
-}
-
-//+------------------------------------------------------------------+
-//| AMÉLIORATION #1: Adjust Risk Based on Volatility Regime         |
-//+------------------------------------------------------------------+
-double GetVolatilityAdjustedRisk(string regime, double baseRisk)
-{
-    if(regime == "EXTREME") return 0.0;       // Skip trades
-    if(regime == "HIGH") return baseRisk * 0.67; // Reduce -33%
-    if(regime == "LOW") return baseRisk * 1.33;  // Increase +33%
-    return baseRisk; // NORMAL
-}
-
-//+------------------------------------------------------------------+
-//| AMÉLIORATION #2: Time-Based Session Filter                      |
-//+------------------------------------------------------------------+
-bool CheckTimeFilter()
-{
-    if(!InpTimeFilter_Enabled) return true;
-
-    MqlDateTime dt;
-    TimeToStruct(TimeCurrent(), dt);
-
-    //--- Avoid lunch time (12h-14h GMT) - Low volume
-    if(InpTimeFilter_AvoidLunchTime && dt.hour >= 12 && dt.hour < 14)
-    {
-        if(InpVerboseLogs) Print("Filtre TIME: Lunch time évité (12h-14h)");
-        return false;
-    }
-
-    //--- Avoid Asian night (22h-2h GMT) - Flat market
-    if(InpTimeFilter_AvoidAsianNight && (dt.hour >= 22 || dt.hour < 2))
-    {
-        if(InpVerboseLogs) Print("Filtre TIME: Asian night évité (22h-2h)");
-        return false;
-    }
-
-    return true;
-}
-
-//+------------------------------------------------------------------+
-//| AMÉLIORATION #6: Update Equity Curve                            |
-//+------------------------------------------------------------------+
-void UpdateEquityCurve(double profit)
-{
-    g_EquityCurve[g_EquityCurveIndex] = profit;
-    g_EquityCurveIndex = (g_EquityCurveIndex + 1) % InpEquityCurve_LookbackTrades;
-
-    //--- Check if we have enough data
-    double sumCheck = 0;
-    for(int j = 0; j < InpEquityCurve_LookbackTrades; j++)
-        sumCheck += MathAbs(g_EquityCurve[j]);
-
-    if(sumCheck == 0 && g_EquityCurveIndex < 5) return;
-
-    //--- Calculate slope (simple linear regression)
-    double sumX = 0, sumY = 0, sumXY = 0, sumX2 = 0;
-    int n = 0;
-
-    for(int i = 0; i < InpEquityCurve_LookbackTrades; i++)
-    {
-        if(g_EquityCurve[i] != 0)
-        {
-            sumX += n;
-            sumY += g_EquityCurve[i];
-            sumXY += n * g_EquityCurve[i];
-            sumX2 += n * n;
-            n++;
-        }
-    }
-
-    if(n < 10) return; // Pas assez de données
-
-    double slope = (n * sumXY - sumX * sumY) / (n * sumX2 - sumX * sumX);
-
-    //--- Negative slope = Losing trend → Pause
-    if(slope < 0)
-    {
-        g_PauseUntilTime = TimeCurrent() + InpEquityCurve_PauseDaysNegSlope * 86400;
-        Print("⚠️ EQUITY CURVE: Slope négatif détecté (", DoubleToString(slope, 4), ") - Pause ", InpEquityCurve_PauseDaysNegSlope, " jours");
-    }
-
-    //--- 10 consecutive losses → Pause
-    if(g_ConsecutiveLosses >= 10)
-    {
-        g_PauseUntilTime = TimeCurrent() + InpEquityCurve_PauseDaysLosingStreak * 86400;
-        Print("⚠️ EQUITY CURVE: 10 pertes consécutives - Pause ", InpEquityCurve_PauseDaysLosingStreak, " jour");
-    }
-}
-
-//+------------------------------------------------------------------+
-//| AMÉLIORATION #6: Check if trading is paused                     |
-//+------------------------------------------------------------------+
-bool CheckEquityPause()
-{
-    if(!InpEquityCurve_Enabled) return true;
-
-    if(TimeCurrent() < g_PauseUntilTime)
-    {
-        if(InpVerboseLogs) Print("EQUITY CURVE: Pause active jusqu'à ", TimeToString(g_PauseUntilTime));
-        return false;
-    }
-
-    return true;
-}
-
-//+------------------------------------------------------------------+
-//| AMÉLIORATION #7: Detect Market Regime (Trending vs Ranging)     |
-//+------------------------------------------------------------------+
-string DetectMarketRegime(int symbolIndex)
-{
-    if(!InpADX_Enabled) return "NEUTRAL";
-
-    double adx[];
-    ArraySetAsSeries(adx, true);
-
-    if(CopyBuffer(g_ADX_Handle[symbolIndex], 0, 0, 3, adx) < 3)
-        return "NEUTRAL";
-
-    double currentADX = adx[0];
-
-    if(currentADX >= InpADX_TrendingThreshold)
-        return "TRENDING";  // ADX > 25
-    else if(currentADX <= InpADX_RangingThreshold)
-        return "RANGING";   // ADX < 20
-    else
-        return "NEUTRAL";   // 20-25
-}
-
-//+------------------------------------------------------------------+
-//| AMÉLIORATION #8: Check Currency Diversification                 |
-//+------------------------------------------------------------------+
-bool CheckCurrencyDiversification(string symbol)
-{
-    //--- Extract currencies from symbol (ex: EURUSD → EUR, USD)
-    string base = StringSubstr(symbol, 0, 3);
-    string quote = StringSubstr(symbol, 3, 3);
-
-    int currencyExposure[];
-    ArrayResize(currencyExposure, 8);
-    ArrayInitialize(currencyExposure, 0);
-
-    string currencies[] = {"EUR", "USD", "GBP", "JPY", "CHF", "AUD", "NZD", "CAD"};
-
-    //--- Count currency exposure in open positions
-    for(int i = 0; i < PositionsTotal(); i++)
-    {
-        if(PositionGetTicket(i) > 0 && PositionGetInteger(POSITION_MAGIC) == InpMagicNumber)
-        {
-            string posSymbol = PositionGetString(POSITION_SYMBOL);
-            string posBase = StringSubstr(posSymbol, 0, 3);
-            string posQuote = StringSubstr(posSymbol, 3, 3);
-
-            for(int c = 0; c < 8; c++)
-            {
-                if(posBase == currencies[c] || posQuote == currencies[c])
-                    currencyExposure[c]++;
-            }
-        }
-    }
-
-    //--- Check if adding this trade would exceed 40% single currency exposure
-    int totalPositions = PositionsTotal();
-    if(totalPositions == 0) return true;
-
-    for(int c = 0; c < 8; c++)
-    {
-        if(base == currencies[c] || quote == currencies[c])
-        {
-            double exposurePercent = (double)(currencyExposure[c] + 1) / (double)(totalPositions + 1) * 100.0;
-
-            if(exposurePercent > 40.0)
-            {
-                if(InpVerboseLogs)
-                    Print("Filtre CURRENCY DIVERSIFICATION: ", currencies[c], " exposition > 40% (", DoubleToString(exposurePercent, 1), "%)");
-                return false;
-            }
-        }
-    }
-
-    return true;
-}
-
-//+------------------------------------------------------------------+
-//| AMÉLIORATION #10: Update News Cache (Myfxbook XML)              |
-//+------------------------------------------------------------------+
-void UpdateNewsCache()
-{
-    if(!InpNews_Enabled) return;
-
-    //--- Check if update needed
-    if(TimeCurrent() - g_NewsLastUpdate < InpNews_UpdateIntervalHours * 3600) return;
-
-    //--- Build Myfxbook XML URL
-    datetime now = TimeCurrent();
-    datetime tomorrow = now + 86400;
-
-    MqlDateTime dtNow, dtTomorrow;
-    TimeToStruct(now, dtNow);
-    TimeToStruct(tomorrow, dtTomorrow);
-
-    string startDate = StringFormat("%04d-%02d-%02d 00:00", dtNow.year, dtNow.mon, dtNow.day);
-    string endDate = StringFormat("%04d-%02d-%02d 23:59", dtTomorrow.year, dtTomorrow.mon, dtTomorrow.day);
-
-    // Filter: 2-3 = Medium-High importance, major currencies
-    string url = "http://www.myfxbook.com/calendar_statement.xml?start=" + startDate +
-                 "&end=" + endDate +
-                 "&filter=2-3_PEI-USD-EUR-GBP-JPY-CHF-AUD-NZD-CAD&calPeriod=10";
-
-    //--- Fetch XML (WebRequest nécessite URL dans liste autorisée)
-    char data[], result[];
-    string headers;
-    int timeout = 5000;
-
-    ResetLastError();
-    int res = WebRequest("GET", url, NULL, NULL, timeout, data, 0, result, headers);
-
-    if(res == -1)
-    {
-        int error = GetLastError();
-        if(error == 4060)
-        {
-            Print("⚠️ NEWS FILTER: Ajoutez 'www.myfxbook.com' dans Outils > Options > Expert Advisors > WebRequest");
-        }
-        else
-        {
-            Print("Erreur WebRequest News: ", error);
-        }
-        return;
-    }
-
-    //--- Parse XML response (simplifié - extraction basique)
-    string xmlResponse = CharArrayToString(result);
-
-    //--- Simple parsing: chercher <event> tags
-    ArrayResize(g_NewsEvents, 0);
-
-    int pos = 0;
-    while(true)
-    {
-        int eventStart = StringFind(xmlResponse, "<event>", pos);
-        if(eventStart == -1) break;
-
-        int eventEnd = StringFind(xmlResponse, "</event>", eventStart);
-        if(eventEnd == -1) break;
-
-        string eventBlock = StringSubstr(xmlResponse, eventStart, eventEnd - eventStart);
-
-        //--- Extract fields
-        NewsEvent evt;
-        evt.time = ExtractXMLDateTime(eventBlock);
-        evt.currency = ExtractXMLTag(eventBlock, "currencycode");
-        evt.title = ExtractXMLTag(eventBlock, "title");
-        evt.importance = (int)StringToInteger(ExtractXMLTag(eventBlock, "impact"));
-
-        if(evt.importance >= InpNews_MinImportance)
-        {
-            int size = ArraySize(g_NewsEvents);
-            ArrayResize(g_NewsEvents, size + 1);
-            g_NewsEvents[size] = evt;
-        }
-
-        pos = eventEnd;
-    }
-
-    g_NewsLastUpdate = TimeCurrent();
-
-    if(InpVerboseLogs)
-        Print("✅ NEWS CACHE: ", ArraySize(g_NewsEvents), " événements chargés (importance ≥", InpNews_MinImportance, ")");
-}
-
-//+------------------------------------------------------------------+
-//| Helper: Extract XML tag value                                   |
-//+------------------------------------------------------------------+
-string ExtractXMLTag(string xml, string tag)
-{
-    string openTag = "<" + tag + ">";
-    string closeTag = "</" + tag + ">";
-
-    int start = StringFind(xml, openTag);
-    if(start == -1) return "";
-
-    start += StringLen(openTag);
-    int end = StringFind(xml, closeTag, start);
-    if(end == -1) return "";
-
-    return StringSubstr(xml, start, end - start);
-}
-
-//+------------------------------------------------------------------+
-//| Helper: Extract datetime from XML                               |
-//+------------------------------------------------------------------+
-datetime ExtractXMLDateTime(string xml)
-{
-    string dateStr = ExtractXMLTag(xml, "date");
-    if(dateStr == "") return 0;
-
-    // Format: "2025-01-15 14:30:00"
-    return StringToTime(dateStr);
-}
-
-//+------------------------------------------------------------------+
-//| AMÉLIORATION #10: Check News Filter                             |
-//+------------------------------------------------------------------+
-bool CheckNewsFilter()
-{
-    if(!InpNews_Enabled) return true;
-
-    //--- Update cache if needed
-    UpdateNewsCache();
-
-    //--- Check cached news events
-    datetime now = TimeCurrent();
-
-    for(int i = 0; i < ArraySize(g_NewsEvents); i++)
-    {
-        datetime pauseBefore = g_NewsEvents[i].time - InpNews_PauseBeforeMinutes * 60;
-        datetime pauseAfter = g_NewsEvents[i].time + InpNews_PauseAfterMinutes * 60;
-
-        if(now >= pauseBefore && now <= pauseAfter)
-        {
-            if(InpVerboseLogs)
-            {
-                Print("Filtre NEWS: ", g_NewsEvents[i].currency, " - ", g_NewsEvents[i].title,
-                      " (Importance:", g_NewsEvents[i].importance, ") à ",
-                      TimeToString(g_NewsEvents[i].time, TIME_DATE|TIME_MINUTES));
-            }
-            return false;
-        }
-    }
-
-    return true;
+    g_DailyPnL = currentBalance - g_InitialBalance;
 }
 //+------------------------------------------------------------------+
