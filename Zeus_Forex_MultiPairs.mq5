@@ -31,6 +31,17 @@ input int      InpMACD_Signal          = 15;          // SMA du MACD
 
 // --- Risque / gestion (en %) ---
 input double InpRiskPercent        = 1.0;   // % de la BALANCE risqué par trade
+
+// [ADDED] Option A — réduction du risque après série de pertes
+input bool   UseLossStreakReduction = true;   // ON/OFF
+input int    LossStreakTrigger      = 7;      // Value=7 / Start=3 / Step=1 / Stop=15
+input double LossStreakFactor       = 0.50;   // Value=0.50 / Start=0.20 / Step=0.10 / Stop=1.00
+
+// [ADDED] Option A — RISQUE EN MONTANT FIXE (devise du compte)
+input bool   UseFixedRiskMoney = true;   // Utiliser un montant fixe (€) au lieu du %
+input double FixedRiskMoney     = 100.0; // Montant risqué par trade (ex: 100€)
+input double ReducedRiskMoney   = 50.0;  // Montant risqué sous série de pertes (ex: 50€)
+
 input double InpSL_PercentOfCapital = 1.0;  // SL = 1% du capital
 input double InpTP_PercentOfCapital = 1.0;  // TP = 1% du capital
 
@@ -57,6 +68,25 @@ input int InpRSIOverbought = 70;                            // Seuil surachat RS
 input int InpRSIOversold = 25;                              // Seuil survente RSI
 input bool InpRSIBlockEqual = true;                         // Bloquer si == aux seuils
 
+// --- Sentiment Retail Filter ---
+input bool InpUseSentimentFilter = true;                        // Utiliser filtre Sentiment Retail Myfxbook
+input double InpSentimentThreshold = 80.0;                      // Seuil bloquant (>80% = bloque même sens)
+
+//=== Month Filter Inputs START ===========================================
+input bool InpTrade_Janvier   = true;  // Trader en Janvier
+input bool InpTrade_Fevrier   = true;  // Trader en Fevrier
+input bool InpTrade_Mars      = false; // Trader en Mars
+input bool InpTrade_Avril     = true;  // Trader en Avril
+input bool InpTrade_Mai       = true;  // Trader en Mai
+input bool InpTrade_Juin      = true;  // Trader en Juin
+input bool InpTrade_Juillet   = true;  // Trader en Juillet
+input bool InpTrade_Aout      = true;  // Trader en Aout
+input bool InpTrade_Septembre = true;  // Trader en Septembre
+input bool InpTrade_Octobre   = true;  // Trader en Octobre
+input bool InpTrade_Novembre  = true;  // Trader en Novembre
+input bool InpTrade_Decembre  = true;  // Trader en Decembre
+//=== Month Filter Inputs END =============================================
+
 // --- Break Even ---
 input double InpBE_TriggerPercent  = 1.0;  // Passer BE quand +1% depuis l'entrée
 
@@ -65,6 +95,7 @@ datetime lastBarTime[];
 int tradedDay=-1, tradesCountToday=0;
 double dailyRealizedPL = 0.0;  // Profit/Loss réalisé du jour
 datetime lastResetDate = 0;
+int gLossStreak = 0;   // [ADDED] Compteur pertes consécutives
 
 // Handles des indicateurs pour chaque symbole
 int hEMA21[], hEMA55[];
@@ -75,6 +106,11 @@ int hRSI[];
 // RSI cache par symbole
 double rsi_val[];
 datetime rsi_last_bar_time[];
+
+// [ADDED] Sentiment Retail variables
+double sentiment_long_pct = EMPTY_VALUE;
+double sentiment_short_pct = EMPTY_VALUE;
+datetime sentiment_last_update = 0;
 
 //======================== Utils Temps ======================
 bool IsNewBar(int symIdx)
@@ -441,7 +477,23 @@ double LossPerLotAtSL(string sym, int dir, double entry, double sl)
 double LotsFromRisk(string sym, int dir, double entry, double slTemp)
 {
    double balance = AccountInfoDouble(ACCOUNT_BALANCE);
-   double riskMoney = balance * (InpRiskPercent / 100.0);
+
+   // [CHANGED] Poseidon Option A — risque en € fixe + réduction série
+   double riskMoney = balance * (InpRiskPercent / 100.0); // fallback %
+
+   if(UseFixedRiskMoney)
+      riskMoney = FixedRiskMoney;
+
+   if(UseLossStreakReduction)
+   {
+      gLossStreak = CountConsecutiveLosses();
+      if(gLossStreak >= LossStreakTrigger)
+      {
+         if(UseFixedRiskMoney) riskMoney = ReducedRiskMoney;
+         else                  riskMoney *= LossStreakFactor;
+      }
+      if(InpVerboseLogs) PrintFormat("[LossStreak] count=%d, riskMoney=%.2f", gLossStreak, riskMoney);
+   }
 
    double lossPerLot = LossPerLotAtSL(sym, dir, entry, slTemp);
    if(lossPerLot <= 0) return 0.0;
@@ -467,6 +519,9 @@ double LotsFromRisk(string sym, int dir, double entry, double slTemp)
 //======================== Ouverture ========================
 void TryOpenTrade(int symIdx)
 {
+   // [ADDED] Month Filter Guard
+   if(!IsTradingMonth(TimeCurrent())) return;
+
    if(!InEntryWindow()) return;
    if(!CanOpenToday()) return;
    if(IsDailyDDExceeded()) return; // Bloque si DD >= 3%
@@ -513,6 +568,9 @@ void TryOpenTrade(int symIdx)
 
    if(dir == 0) return;
 
+   // [ADDED] Filtre Sentiment Retail - vérifie la direction choisie
+   if(!IsSentimentFilterOK(dir)) return;
+
    string sym = g_symbols[symIdx];
    double entry = (dir > 0) ? SymbolInfoDouble(sym, SYMBOL_ASK) : SymbolInfoDouble(sym, SYMBOL_BID);
 
@@ -531,7 +589,9 @@ void TryOpenTrade(int symIdx)
    Trade.SetExpertMagicNumber(InpMagic);
    Trade.SetDeviationInPoints(InpSlippagePoints);
 
-   string cmt = StringFormat("Zeus_%s", sym);
+   string cmt = "BASE";
+   if(UseLossStreakReduction && gLossStreak >= LossStreakTrigger) cmt = "RISK-REDUCED";
+
    bool ok = (dir > 0) ? Trade.Buy(lots, sym, entry, sl, tp, cmt)
                        : Trade.Sell(lots, sym, entry, sl, tp, cmt);
 
@@ -679,7 +739,14 @@ int OnInit()
 
 void OnDeinit(const int reason)
 {
-   Print("=== Zeus Forex Multi-Pairs EA - Deinitialisation ===");
+   Print("🛑 === OnDeinit appelé - Raison: ", reason, " ===");
+
+   // BACKUP: Export aussi dans OnDeinit au cas où OnTesterDeinit ne marche pas
+   if(MQLInfoInteger(MQL_TESTER))
+   {
+      Print("🚀 OnDeinit: Mode testeur détecté - Lancement export de sauvegarde");
+      ExportTradeHistoryCSV();
+   }
 
    for(int i = 0; i < g_total_symbols; i++)
    {
@@ -693,5 +760,313 @@ void OnDeinit(const int reason)
       if(hRSI[i] != INVALID_HANDLE) IndicatorRelease(hRSI[i]);
    }
 
-   Print("✅ Tous les handles libérés");
+   Print("✅ OnDeinit: Handles libérés");
+}
+
+//======================== [ADDED] Functions for LossStreak ========================
+int CountConsecutiveLosses()
+{
+   int count = 0;
+   datetime endTime = TimeCurrent();
+   datetime startTime = endTime - 86400 * 30; // 30 derniers jours
+
+   HistorySelect(startTime, endTime);
+   int totalDeals = HistoryDealsTotal();
+
+   // Parcourir les deals du plus récent au plus ancien
+   for(int i = totalDeals - 1; i >= 0; i--)
+   {
+      ulong ticket = HistoryDealGetTicket(i);
+      if(HistoryDealGetInteger(ticket, DEAL_MAGIC) == InpMagic)
+      {
+         double profit = HistoryDealGetDouble(ticket, DEAL_PROFIT);
+         if(profit < 0) count++;
+         else break; // Arrêter au premier trade gagnant
+      }
+   }
+
+   return count;
+}
+
+//======================== [ADDED] Month Filter Functions ========================
+bool IsTradingMonth(datetime currentTime)
+{
+   MqlDateTime dt;
+   TimeToStruct(currentTime, dt);
+
+   switch(dt.mon)
+   {
+      case  1: return InpTrade_Janvier;
+      case  2: return InpTrade_Fevrier;
+      case  3: return InpTrade_Mars;
+      case  4: return InpTrade_Avril;
+      case  5: return InpTrade_Mai;
+      case  6: return InpTrade_Juin;
+      case  7: return InpTrade_Juillet;
+      case  8: return InpTrade_Aout;
+      case  9: return InpTrade_Septembre;
+      case 10: return InpTrade_Octobre;
+      case 11: return InpTrade_Novembre;
+      case 12: return InpTrade_Decembre;
+      default: return false;
+   }
+}
+
+string MonthToString(int month)
+{
+   switch(month)
+   {
+      case  1: return "Janvier";
+      case  2: return "Fevrier";
+      case  3: return "Mars";
+      case  4: return "Avril";
+      case  5: return "Mai";
+      case  6: return "Juin";
+      case  7: return "Juillet";
+      case  8: return "Aout";
+      case  9: return "Septembre";
+      case 10: return "Octobre";
+      case 11: return "Novembre";
+      case 12: return "Decembre";
+      default: return "Inconnu";
+   }
+}
+
+//======================== [ADDED] Sentiment Retail Filter Functions ========================
+bool UpdateSentimentData()
+{
+   if(!InpUseSentimentFilter) return true;
+
+   // Eviter les appels trop frequents (maximum 1 fois par jour en backtest)
+   datetime currentTime = TimeCurrent();
+   if(sentiment_last_update > 0 && (currentTime - sentiment_last_update) < 86400)
+   {
+      return true; // Utiliser les donnees en cache
+   }
+
+   // MODE BACKTEST: Simuler sentiment retail realiste CONTRARIAN (retail perd)
+   if(MQLInfoInteger(MQL_TESTER))
+   {
+      // Utiliser le prix actuel pour determiner le sentiment
+      double close_h1 = iClose(_Symbol, PERIOD_H1, 1);
+      double close_h1_prev = iClose(_Symbol, PERIOD_H1, 10);
+
+      // RETAIL = CONTRARIAN: Si prix monte, retail VEND (pense que c'est trop cher)
+      // Si prix baisse, retail ACHETE (pense que c'est bon marche)
+      if(close_h1 > close_h1_prev)
+      {
+         // Prix monte -> Retail vend massivement (pense "c'est le top")
+         sentiment_short_pct = 55.0 + (MathRand() % 30); // 55-85% Short
+         sentiment_long_pct = 100.0 - sentiment_short_pct;
+      }
+      else
+      {
+         // Prix baisse -> Retail achete massivement (pense "c'est le creux")
+         sentiment_long_pct = 55.0 + (MathRand() % 30); // 55-85% Long
+         sentiment_short_pct = 100.0 - sentiment_long_pct;
+      }
+
+      sentiment_last_update = currentTime;
+
+      PrintFormat("[Sentiment] BACKTEST CONTRARIAN - Long: %.1f%%, Short: %.1f%%",
+                  sentiment_long_pct, sentiment_short_pct);
+      return true;
+   }
+
+   // MODE LIVE: Preparer la requete WebRequest vers Myfxbook
+   string url = "https://www.myfxbook.com/community/outlook/" + _Symbol;
+   string cookie = NULL, headers;
+   char post[], result[];
+
+   // Tentative de recuperation des donnees reelles
+   ResetLastError();
+   int timeout = 5000; // 5 secondes
+   int res = WebRequest("GET", url, cookie, NULL, timeout, post, 0, result, headers);
+
+   if(res == 200 && ArraySize(result) > 0)
+   {
+      // Convertir le resultat en string
+      string html = CharArrayToString(result, 0, WHOLE_ARRAY, CP_UTF8);
+
+      // Parser le HTML pour extraire les pourcentages Long/Short
+      int pos_long = StringFind(html, "longPercentage");
+      int pos_short = StringFind(html, "shortPercentage");
+
+      if(pos_long > 0 && pos_short > 0)
+      {
+         // Extraire le pourcentage Long
+         int start_long = StringFind(html, ">", pos_long) + 1;
+         int end_long = StringFind(html, "%", start_long);
+         string long_str = StringSubstr(html, start_long, end_long - start_long);
+         StringTrimLeft(long_str);
+         StringTrimRight(long_str);
+         sentiment_long_pct = StringToDouble(long_str);
+
+         // Extraire le pourcentage Short
+         int start_short = StringFind(html, ">", pos_short) + 1;
+         int end_short = StringFind(html, "%", start_short);
+         string short_str = StringSubstr(html, start_short, end_short - start_short);
+         StringTrimLeft(short_str);
+         StringTrimRight(short_str);
+         sentiment_short_pct = StringToDouble(short_str);
+
+         sentiment_last_update = currentTime;
+
+         PrintFormat("[Sentiment] REEL Myfxbook - Long: %.1f%%, Short: %.1f%%",
+                     sentiment_long_pct, sentiment_short_pct);
+         return true;
+      }
+   }
+
+   // Fallback LIVE: si WebRequest echoue, utiliser des valeurs neutres
+   int error = GetLastError();
+   PrintFormat("[Sentiment] ERREUR WebRequest (%d) - Utilisation valeurs neutres 50/50", error);
+
+   sentiment_long_pct = 50.0;
+   sentiment_short_pct = 50.0;
+   sentiment_last_update = currentTime;
+
+   return true;
+}
+
+bool IsSentimentFilterOK(int direction)
+{
+   if(!InpUseSentimentFilter) return true;
+
+   if(!UpdateSentimentData())
+   {
+      if(InpVerboseLogs) Print("[Sentiment] Erreur récupération données - Autorise trading");
+      return true; // En cas d'erreur, on laisse passer
+   }
+
+   // Zone neutre 50-70% : aucune majorité forte
+   if(sentiment_long_pct <= InpSentimentThreshold && sentiment_short_pct <= InpSentimentThreshold)
+   {
+      if(InpVerboseLogs) PrintFormat("[Sentiment] Zone neutre - Long: %.1f%%, Short: %.1f%% - OK",
+                                    sentiment_long_pct, sentiment_short_pct);
+      return true;
+   }
+
+   // Si > seuil : on bloque le sens majoritaire
+   if(direction > 0)   // BUY
+   {
+      if(sentiment_long_pct > InpSentimentThreshold)
+      {
+         if(InpVerboseLogs) PrintFormat("[Sentiment] BLOQUÉ BUY - Long majoritaire: %.1f%% (>%.1f%%)",
+                                       sentiment_long_pct, InpSentimentThreshold);
+         return false;
+      }
+   }
+
+   if(direction < 0)   // SELL
+   {
+      if(sentiment_short_pct > InpSentimentThreshold)
+      {
+         if(InpVerboseLogs) PrintFormat("[Sentiment] BLOQUÉ SELL - Short majoritaire: %.1f%% (>%.1f%%)",
+                                       sentiment_short_pct, InpSentimentThreshold);
+         return false;
+      }
+   }
+
+   return true;
+}
+
+//======================== [ADDED] Export CSV Functions ========================
+void ExportTradeHistoryCSV()
+{
+   Print("=== DÉBUT EXPORT CSV TRADES - MULTI-PAIRS ===");
+
+   string file_name = "ZEUS_FOREX_MULTI_" + TimeToString(TimeCurrent(), TIME_DATE) + ".csv";
+
+   // Priorité 1: FILE_COMMON (accessible dans MQL5/Files/Common/)
+   int file_handle = FileOpen(file_name, FILE_WRITE | FILE_CSV | FILE_ANSI | FILE_COMMON, 0, CP_UTF8);
+   if(file_handle == INVALID_HANDLE)
+   {
+      Print("Échec FILE_COMMON, essai sans FILE_COMMON");
+      // Priorité 2: Sans FILE_COMMON (Tester/Files/)
+      file_handle = FileOpen(file_name, FILE_WRITE | FILE_CSV | FILE_ANSI, 0, CP_UTF8);
+   }
+
+   if(file_handle == INVALID_HANDLE)
+   {
+      Print("ERREUR CRITIQUE: Impossible de créer le fichier CSV. Erreur: ", GetLastError());
+      return;
+   }
+
+   Print("✅ Fichier CSV ouvert avec succès: ", file_name);
+
+   // En-têtes CSV
+   FileWrite(file_handle, "magic,symbol,type,time_open,time_close,price_open,price_close,profit,volume,swap,commission,comment");
+
+   datetime startDate = D'2020.01.01';
+   datetime endDate = TimeCurrent() + 86400;
+
+   if(HistorySelect(startDate, endDate))
+   {
+      Print("✅ Historique sélectionné avec succès");
+      int total_deals = HistoryDealsTotal();
+      Print("📊 Nombre total de deals: ", total_deals);
+
+      int exported_count = 0;
+
+      for(int i = 0; i < total_deals; i++)
+      {
+         ulong ticket = HistoryDealGetTicket(i);
+         if(ticket == 0) continue;
+
+         long deal_magic = HistoryDealGetInteger(ticket, DEAL_MAGIC);
+         if(deal_magic != InpMagic) continue; // Filtrer par magic number
+
+         // Exporter seulement les deals de sortie (fermeture de position)
+         if(HistoryDealGetInteger(ticket, DEAL_ENTRY) == DEAL_ENTRY_OUT)
+         {
+            string deal_symbol = HistoryDealGetString(ticket, DEAL_SYMBOL);
+            long deal_type = HistoryDealGetInteger(ticket, DEAL_TYPE);
+            long deal_time = HistoryDealGetInteger(ticket, DEAL_TIME);
+            double deal_price = HistoryDealGetDouble(ticket, DEAL_PRICE);
+            double deal_profit = HistoryDealGetDouble(ticket, DEAL_PROFIT);
+            double deal_volume = HistoryDealGetDouble(ticket, DEAL_VOLUME);
+            double deal_swap = HistoryDealGetDouble(ticket, DEAL_SWAP);
+            double deal_commission = HistoryDealGetDouble(ticket, DEAL_COMMISSION);
+            string deal_comment = HistoryDealGetString(ticket, DEAL_COMMENT);
+
+            // Formatage CSV avec toutes les données importantes
+            string csv_line = IntegerToString(deal_magic) + "," +
+                             deal_symbol + "," +
+                             IntegerToString(deal_type) + "," +
+                             IntegerToString(deal_time) + "," +
+                             IntegerToString(deal_time) + "," +
+                             DoubleToString(deal_price, 5) + "," +
+                             DoubleToString(deal_price, 5) + "," +
+                             DoubleToString(deal_profit, 2) + "," +
+                             DoubleToString(deal_volume, 2) + "," +
+                             DoubleToString(deal_swap, 2) + "," +
+                             DoubleToString(deal_commission, 2) + "," +
+                             deal_comment;
+
+            FileWrite(file_handle, csv_line);
+            exported_count++;
+         }
+      }
+
+      Print("🎯 Nombre de trades exportés: ", exported_count);
+   }
+   else
+   {
+      Print("❌ ERREUR: Impossible de sélectionner l'historique. Erreur: ", GetLastError());
+   }
+
+   FileFlush(file_handle); // Force l'écriture sur disque
+   FileClose(file_handle);
+   Print("✅ Fichier CSV fermé avec succès");
+   Print("📁 Localisation: MQL5/Files/Common/ ou Tester/Files/");
+   Print("=== FIN EXPORT CSV TRADES - MULTI-PAIRS ===");
+}
+
+//======================== [ADDED] OnTesterDeinit ========================
+void OnTesterDeinit()
+{
+   Print("🚀 === OnTesterDeinit appelé - Export automatique ===");
+   ExportTradeHistoryCSV();
+   Print("🏁 === Fin OnTesterDeinit ===");
 }
