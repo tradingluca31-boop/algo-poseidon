@@ -31,17 +31,6 @@ input int      InpMACD_Signal          = 15;          // SMA du MACD
 
 // --- Risque / gestion (en %) ---
 input double InpRiskPercent        = 1.0;   // % de la BALANCE risqué par trade
-
-// [ADDED] Option A — réduction du risque après série de pertes
-input bool   UseLossStreakReduction = true;   // ON/OFF
-input int    LossStreakTrigger      = 7;      // Value=7 / Start=3 / Step=1 / Stop=15
-input double LossStreakFactor       = 0.50;   // Value=0.50 / Start=0.20 / Step=0.10 / Stop=1.00
-
-// [ADDED] Option A — RISQUE EN MONTANT FIXE (devise du compte)
-input bool   UseFixedRiskMoney = true;   // Utiliser un montant fixe (€) au lieu du %
-input double FixedRiskMoney     = 100.0; // Montant risqué par trade (ex: 100€)
-input double ReducedRiskMoney   = 50.0;  // Montant risqué sous série de pertes (ex: 50€)
-
 input double InpSL_PercentOfPrice = 0.5;    // SL = % du prix d'entrée (Value=0.5 / Start=0.2 / Step=0.1 / Stop=2.0)
 input double InpTP_PercentOfPrice = 1.5;    // TP = % du prix d'entrée (Value=1.5 / Start=0.5 / Step=0.5 / Stop=5.0)
 input double InpBE_TriggerPercent = 0.7;    // Passer BE quand +0.7% depuis l'entrée
@@ -94,7 +83,6 @@ datetime lastBarTime[];
 int tradedDay=-1, tradesCountToday=0;
 double dailyRealizedPL = 0.0;  // Profit/Loss réalisé du jour
 datetime lastResetDate = 0;
-int gLossStreak = 0;   // [ADDED] Compteur pertes consécutives
 
 // Handles des indicateurs pour chaque symbole
 int hEMA21[], hEMA55[];
@@ -448,23 +436,7 @@ double LossPerLotAtSL(string sym, int dir, double entry, double sl)
 double LotsFromRisk(string sym, int dir, double entry, double slTemp)
 {
    double balance = AccountInfoDouble(ACCOUNT_BALANCE);
-
-   // [CHANGED] Poseidon Option A — risque en € fixe + réduction série
-   double riskMoney = balance * (InpRiskPercent / 100.0); // fallback %
-
-   if(UseFixedRiskMoney)
-      riskMoney = FixedRiskMoney;
-
-   if(UseLossStreakReduction)
-   {
-      gLossStreak = CountConsecutiveLosses();
-      if(gLossStreak >= LossStreakTrigger)
-      {
-         if(UseFixedRiskMoney) riskMoney = ReducedRiskMoney;
-         else                  riskMoney *= LossStreakFactor;
-      }
-      if(InpVerboseLogs) PrintFormat("[LossStreak] count=%d, riskMoney=%.2f", gLossStreak, riskMoney);
-   }
+   double riskMoney = balance * (InpRiskPercent / 100.0);
 
    double lossPerLot = LossPerLotAtSL(sym, dir, entry, slTemp);
    if(lossPerLot <= 0) return 0.0;
@@ -556,9 +528,7 @@ void TryOpenTrade(int symIdx)
    Trade.SetExpertMagicNumber(InpMagic);
    Trade.SetDeviationInPoints(InpSlippagePoints);
 
-   string cmt = "BASE";
-   if(UseLossStreakReduction && gLossStreak >= LossStreakTrigger) cmt = "RISK-REDUCED";
-
+   string cmt = "Zeus_Forex";
    bool ok = (dir > 0) ? Trade.Buy(lots, sym, entry, sl, tp, cmt)
                        : Trade.Sell(lots, sym, entry, sl, tp, cmt);
 
@@ -760,32 +730,7 @@ void OnDeinit(const int reason)
    Print("✅ OnDeinit: Handles libérés");
 }
 
-//======================== [ADDED] Functions for LossStreak ========================
-int CountConsecutiveLosses()
-{
-   int count = 0;
-   datetime endTime = TimeCurrent();
-   datetime startTime = endTime - 86400 * 30; // 30 derniers jours
-
-   HistorySelect(startTime, endTime);
-   int totalDeals = HistoryDealsTotal();
-
-   // Parcourir les deals du plus récent au plus ancien
-   for(int i = totalDeals - 1; i >= 0; i--)
-   {
-      ulong ticket = HistoryDealGetTicket(i);
-      if(HistoryDealGetInteger(ticket, DEAL_MAGIC) == InpMagic)
-      {
-         double profit = HistoryDealGetDouble(ticket, DEAL_PROFIT);
-         if(profit < 0) count++;
-         else break; // Arrêter au premier trade gagnant
-      }
-   }
-
-   return count;
-}
-
-//======================== [ADDED] Month Filter Functions ========================
+//======================== Month Filter Functions ========================
 bool IsTradingMonth(datetime currentTime)
 {
    MqlDateTime dt;
