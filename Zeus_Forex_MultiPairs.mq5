@@ -42,9 +42,9 @@ input bool   UseFixedRiskMoney = true;   // Utiliser un montant fixe (€) au li
 input double FixedRiskMoney     = 100.0; // Montant risqué par trade (ex: 100€)
 input double ReducedRiskMoney   = 50.0;  // Montant risqué sous série de pertes (ex: 50€)
 
-input double InpSL_PercentOfCapital = 1.0;  // SL = 1% du capital
-input double InpTP_PercentOfCapital = 1.0;  // TP = 1% du capital
-input double InpBE_TriggerPercent  = 1.0;   // Passer BE quand +1% depuis l'entrée
+input double InpSL_PercentOfPrice = 0.5;    // SL = % du prix d'entrée (Value=0.5 / Start=0.2 / Step=0.1 / Stop=2.0)
+input double InpTP_PercentOfPrice = 1.5;    // TP = % du prix d'entrée (Value=1.5 / Start=0.5 / Step=0.5 / Stop=5.0)
+input double InpBE_TriggerPercent = 0.7;    // Passer BE quand +0.7% depuis l'entrée
 input int    InpTimeStop_Hours     = 72;    // Fermeture auto après X heures (Value=72 / Start=12 / Step=12 / Stop=168)
 
 input int    InpMaxTradesPerDay    = 3;     // Max 3 trades/jour TOTAL
@@ -399,60 +399,32 @@ bool CheckRSILevel(double rsi)
    return true;
 }
 
-//======================== Calcul SL/TP basé sur % Capital ========================
-void CalculateSL_TP_FromCapital(string sym, int dir, double entry, double lots, double &sl, double &tp)
+//======================== Calcul SL/TP basé sur % Prix d'entrée ========================
+void CalculateSL_TP_FromPrice(string sym, int dir, double entry, double &sl, double &tp)
 {
-   double balance = AccountInfoDouble(ACCOUNT_BALANCE);
-   double targetLoss = balance * (InpSL_PercentOfCapital / 100.0);
-   double targetProfit = balance * (InpTP_PercentOfCapital / 100.0);
-
    int digits = (int)SymbolInfoInteger(sym, SYMBOL_DIGITS);
-   double point = SymbolInfoDouble(sym, SYMBOL_POINT);
-   double tickValue = SymbolInfoDouble(sym, SYMBOL_TRADE_TICK_VALUE);
-   double tickSize = SymbolInfoDouble(sym, SYMBOL_TRADE_TICK_SIZE);
 
-   if(tickValue <= 0 || tickSize <= 0 || lots <= 0)
-   {
-      // Fallback: 1% du prix
-      if(dir > 0)
-      {
-         sl = entry * 0.99;
-         tp = entry * 1.01;
-      }
-      else
-      {
-         sl = entry * 1.01;
-         tp = entry * 0.99;
-      }
-
-      sl = NormalizeDouble(sl, digits);
-      tp = NormalizeDouble(tp, digits);
-      return;
-   }
-
-   // Calcul distance SL pour atteindre la perte cible
-   double distanceSL = (targetLoss * tickSize) / (tickValue * lots);
-
-   // Calcul distance TP pour atteindre le profit cible
-   double distanceTP = (targetProfit * tickSize) / (tickValue * lots);
+   // Calcul SL/TP en % du prix d'entrée
+   double slPercent = InpSL_PercentOfPrice / 100.0;
+   double tpPercent = InpTP_PercentOfPrice / 100.0;
 
    if(dir > 0) // BUY
    {
-      sl = entry - distanceSL;
-      tp = entry + distanceTP;
+      sl = entry * (1.0 - slPercent);
+      tp = entry * (1.0 + tpPercent);
    }
    else // SELL
    {
-      sl = entry + distanceSL;
-      tp = entry - distanceTP;
+      sl = entry * (1.0 + slPercent);
+      tp = entry * (1.0 - tpPercent);
    }
 
    sl = NormalizeDouble(sl, digits);
    tp = NormalizeDouble(tp, digits);
 
    if(InpVerboseLogs)
-      PrintFormat("[SL/TP] %s - Balance=%.2f, Entry=%.5f, SL=%.5f (%.2f$), TP=%.5f (%.2f$)",
-                  sym, balance, entry, sl, targetLoss, tp, targetProfit);
+      PrintFormat("[SL/TP] %s - Entry=%.5f, SL=%.5f (%.2f%%), TP=%.5f (%.2f%%)",
+                  sym, entry, sl, InpSL_PercentOfPrice, tp, InpTP_PercentOfPrice);
 }
 
 //======================== Sizing 1% FIXE ===================
@@ -573,17 +545,13 @@ void TryOpenTrade(int symIdx)
    string sym = g_symbols[symIdx];
    double entry = (dir > 0) ? SymbolInfoDouble(sym, SYMBOL_ASK) : SymbolInfoDouble(sym, SYMBOL_BID);
 
-   // Calcul temporaire du SL pour dimensionner les lots (1% du prix pour estimation)
-   int digits = (int)SymbolInfoInteger(sym, SYMBOL_DIGITS);
-   double slTemp = (dir > 0) ? entry * 0.99 : entry * 1.01;
-   slTemp = NormalizeDouble(slTemp, digits);
-
-   double lots = LotsFromRisk(sym, dir, entry, slTemp);
-   if(lots <= 0) return;
-
-   // Calcul FINAL du SL/TP basé sur 1% du capital
+   // Calcul SL/TP basé sur % du prix d'entrée
    double sl, tp;
-   CalculateSL_TP_FromCapital(sym, dir, entry, lots, sl, tp);
+   CalculateSL_TP_FromPrice(sym, dir, entry, sl, tp);
+
+   // Calcul des lots avec le SL calculé
+   double lots = LotsFromRisk(sym, dir, entry, sl);
+   if(lots <= 0) return;
 
    Trade.SetExpertMagicNumber(InpMagic);
    Trade.SetDeviationInPoints(InpSlippagePoints);
