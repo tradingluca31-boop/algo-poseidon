@@ -44,24 +44,20 @@ input double InpMaxDailyLoss = 3.0;            // Perte quotidienne max (%) - ST
 input int    InpMaxPositions = 10;             // Positions simultanées max
 
 input group "=== SL/TP ATR DYNAMIQUE ==="
-input double InpSL_ATR_Multiplier = 1.5;       // SL: Multiplicateur ATR (1.5 × ATR)
-input double InpTP_ATR_Multiplier = 4.5;       // TP: Multiplicateur ATR (4.5 × ATR = RR 1:3)
-input double InpBE_ATR_Multiplier = 1.5;       // BE: Multiplicateur ATR (1.5 × ATR = 1R)
-input int    InpMaxHoldingHours = 48;          // Time Stop: fermeture auto après X heures
+input double InpSL_ATR_Multiplier = 2.0;       // SL: Multiplicateur ATR (2.0 × ATR) - Plus large
+input double InpTP_ATR_Multiplier = 6.0;       // TP: Multiplicateur ATR (6.0 × ATR = RR 1:3)
+input double InpBE_ATR_Multiplier = 2.0;       // BE: Multiplicateur ATR (2.0 × ATR = 1R)
+input int    InpMaxHoldingHours = 24;          // Time Stop: fermeture auto après 24h (réduit)
 
 input group "=== TRADING HOURS ==="
 input int    InpTradingStartHour = 6;          // Heure début trading
 input int    InpTradingEndHour = 22;           // Heure fin trading
 
-input group "=== SIGNAUX TECHNIQUES ==="
-input int    InpRSI_Period = 14;               // Période RSI
-input int    InpRSI_Overbought = 70;           // RSI surachat
-input int    InpRSI_Oversold = 30;             // RSI survente
-input int    InpMACD_Fast = 12;                // MACD Fast EMA
-input int    InpMACD_Slow = 26;                // MACD Slow EMA
-input int    InpMACD_Signal = 9;               // MACD Signal
-input int    InpEMA_Period = 200;              // Période EMA
+input group "=== SIGNAUX TECHNIQUES (TREND FOLLOWING) ==="
+input int    InpEMA_Period = 200;              // Période EMA (filtre tendance)
 input int    InpATR_Period = 14;               // Période ATR
+input int    InpSuperTrend_Period = 10;        // Période SuperTrend
+input double InpSuperTrend_Multiplier = 3.0;   // Multiplicateur SuperTrend
 
 input group "=== CORRELATION & EXPOSURE ==="
 input double InpMaxCorrelation = 0.85;         // Corrélation max autorisée
@@ -71,14 +67,14 @@ input ENUM_TIMEFRAMES InpCorrelationTF = PERIOD_H1; // Timeframe corrélation
 input group "=== MARKET REGIME ADX ==="
 input bool   InpADX_Enabled = true;            // Activer détection ADX
 input int    InpADX_Period = 14;               // Période ADX
-input double InpADX_TrendingThreshold = 25.0;  // ADX > 25 = Trending
-input double InpADX_RangingThreshold = 20.0;   // ADX < 20 = Ranging
+input double InpADX_TrendingThreshold = 30.0;  // ADX > 30 = Trending FORT (augmenté)
+input double InpADX_RangingThreshold = 25.0;   // ADX < 25 = Ranging (augmenté)
 
 input group "=== FILTRES QUANTS PROFESSIONNELS ==="
 input bool   InpVolPercentile_Enabled = true;  // Activer Volatility Percentile
 input int    InpVolPercentile_Period = 100;    // Période calcul percentile (100 bougies)
-input double InpVolPercentile_Min = 30.0;      // Percentile min (30% - marché trop calme)
-input double InpVolPercentile_Max = 70.0;      // Percentile max (70% - marché trop volatile)
+input double InpVolPercentile_Min = 40.0;      // Percentile min (40% - fenêtre réduite)
+input double InpVolPercentile_Max = 60.0;      // Percentile max (60% - fenêtre réduite)
 
 input bool   InpSpreadFilter_Enabled = true;   // Activer filtre Spread/ATR
 input double InpSpreadATR_MaxRatio = 0.30;     // Ratio max Spread/ATR (0.3 = 30%)
@@ -87,8 +83,8 @@ input bool   InpZScore_Enabled = true;         // Activer Z-Score filter
 input int    InpZScore_Period = 50;            // Période calcul Z-Score (50 bougies)
 input double InpZScore_MinThreshold = 1.0;     // Z-Score min pour trade (1.0 sigma)
 
-input group "=== SCORING SIGNALS ==="
-input int    InpMinSignalsRequired = 4;        // Signaux minimum requis (sur 10) - OPTIMISÉ
+input group "=== SCORING SIGNALS (TREND FOLLOWING) ==="
+input int    InpMinSignalsRequired = 3;        // Signaux minimum requis (sur 4) = 75%
 
 input group "=== GENERAL SETTINGS ==="
 input int    InpMagicNumber = 789456;          // Magic Number
@@ -107,12 +103,15 @@ double g_DailyStartBalance = 0.0;
 double g_InitialBalance = 0.0;
 double g_PeakBalance = 0.0;
 
-//--- Indicator handles
+//--- Indicator handles (TREND FOLLOWING ONLY)
 int g_EMA_Handle[];
 int g_ATR_Handle[];
-int g_RSI_Handle[];
-int g_MACD_Handle[];
 int g_ADX_Handle[];
+
+//--- SuperTrend arrays (calculated manually, no handle needed)
+double g_SuperTrend_Upper[];
+double g_SuperTrend_Lower[];
+int g_SuperTrend_Direction[];
 
 //--- Position tracking for directional logic
 enum ENUM_MARKET_BIAS {
@@ -135,34 +134,36 @@ int OnInit()
     g_Trade.SetTypeFilling(ORDER_FILLING_FOK);
     g_Trade.SetAsyncMode(false);
 
-    //--- Initialize arrays
+    //--- Initialize arrays (TREND FOLLOWING ONLY - RSI/MACD supprimés)
     ArrayResize(g_EMA_Handle, ArraySize(g_Symbols));
     ArrayResize(g_ATR_Handle, ArraySize(g_Symbols));
-    ArrayResize(g_RSI_Handle, ArraySize(g_Symbols));
-    ArrayResize(g_MACD_Handle, ArraySize(g_Symbols));
     ArrayResize(g_ADX_Handle, ArraySize(g_Symbols));
 
-    //--- Create indicator handles for all symbols
+    ArrayResize(g_SuperTrend_Upper, ArraySize(g_Symbols));
+    ArrayResize(g_SuperTrend_Lower, ArraySize(g_Symbols));
+    ArrayResize(g_SuperTrend_Direction, ArraySize(g_Symbols));
+
+    //--- Create indicator handles for all symbols (TREND FOLLOWING)
     for(int i = 0; i < ArraySize(g_Symbols); i++)
     {
         g_EMA_Handle[i] = iMA(g_Symbols[i], PERIOD_CURRENT, InpEMA_Period, 0, MODE_EMA, PRICE_CLOSE);
         g_ATR_Handle[i] = iATR(g_Symbols[i], PERIOD_CURRENT, InpATR_Period);
-        g_RSI_Handle[i] = iRSI(g_Symbols[i], PERIOD_CURRENT, InpRSI_Period, PRICE_CLOSE);
-        g_MACD_Handle[i] = iMACD(g_Symbols[i], PERIOD_CURRENT, InpMACD_Fast, InpMACD_Slow, InpMACD_Signal, PRICE_CLOSE);
         if(InpADX_Enabled)
             g_ADX_Handle[i] = iADX(g_Symbols[i], PERIOD_CURRENT, InpADX_Period);
 
-        bool handlesOK = (g_EMA_Handle[i] != INVALID_HANDLE && g_ATR_Handle[i] != INVALID_HANDLE &&
-                          g_RSI_Handle[i] != INVALID_HANDLE && g_MACD_Handle[i] != INVALID_HANDLE);
+        bool handlesOK = (g_EMA_Handle[i] != INVALID_HANDLE && g_ATR_Handle[i] != INVALID_HANDLE);
 
         if(InpADX_Enabled)
             handlesOK = handlesOK && (g_ADX_Handle[i] != INVALID_HANDLE);
 
         if(!handlesOK)
         {
-            Print("ERREUR: Impossible de créer les indicateurs pour ", g_Symbols[i]);
+            Print("ERREUR: Impossible de créer les indicateurs TREND FOLLOWING pour ", g_Symbols[i]);
             return INIT_FAILED;
         }
+
+        // Initialize SuperTrend
+        g_SuperTrend_Direction[i] = 0;
     }
 
     //--- Initialize balance tracking
