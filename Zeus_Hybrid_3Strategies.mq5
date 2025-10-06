@@ -66,9 +66,9 @@ input double InpVolRegime_HighThreshold = 70.0;// Seuil High (percentile)
 input double InpVolRegime_ExtremeThreshold = 95.0; // Seuil Extreme (skip trades) - OPTIMISER: 90-99
 
 input group "=== TIME-BASED FILTERS (Amélioration #2) ==="
-input bool   InpTimeFilter_Enabled = true;     // Activer filtres horaires
+input bool   InpTimeFilter_Enabled = false;    // Activer filtres horaires - DÉSACTIVÉ pour backtest
 input bool   InpTimeFilter_AvoidLunchTime = false; // Éviter 12h-14h (low volume) - OPTIMISER: true/false
-input bool   InpTimeFilter_AvoidAsianNight = true; // Éviter 22h-2h (flat) - OPTIMISER: true/false
+input bool   InpTimeFilter_AvoidAsianNight = false; // Éviter 22h-2h (flat) - DÉSACTIVÉ en backtest
 
 input group "=== EQUITY CURVE MONITORING (Amélioration #6) ==="
 input bool   InpEquityCurve_Enabled = false;   // Activer monitoring equity curve - DÉSACTIVÉ pour backtest
@@ -663,15 +663,9 @@ void UpdateDailyRange(string symbol, int symbolIndex)
     if(g_DailyRange[symbolIndex].calculatedDate == today && g_DailyRange[symbolIndex].isValid)
         return;
 
-    //--- Calculate range only after end hour
-    if(dt.hour < InpDRB_EndHour)
-    {
-        g_DailyRange[symbolIndex].isValid = false;
-        return;
-    }
-
     //--- Find high and low between start and end hours (MQL5 syntax)
     datetime startTime, endTime;
+    datetime rangeDate;
 
     if(dt.hour < InpDRB_EndHour)
     {
@@ -690,6 +684,8 @@ void UpdateDailyRange(string symbol, int symbolIndex)
                                IntegerToString(dtYesterday.mon) + "." +
                                IntegerToString(dtYesterday.day) + " " +
                                IntegerToString(InpDRB_EndHour) + ":00");
+
+        rangeDate = yesterday; // Store yesterday's date for cache
     }
     else
     {
@@ -703,6 +699,8 @@ void UpdateDailyRange(string symbol, int symbolIndex)
                                IntegerToString(dt.mon) + "." +
                                IntegerToString(dt.day) + " " +
                                IntegerToString(InpDRB_EndHour) + ":00");
+
+        rangeDate = today; // Store today's date for cache
     }
 
     // MQL5: Use CopyHigh/CopyLow instead of iBarShift
@@ -730,7 +728,7 @@ void UpdateDailyRange(string symbol, int symbolIndex)
     g_DailyRange[symbolIndex].highPrice = rangeHigh;
     g_DailyRange[symbolIndex].lowPrice = rangeLow;
     g_DailyRange[symbolIndex].rangeSize = rangeHigh - rangeLow;
-    g_DailyRange[symbolIndex].calculatedDate = today;
+    g_DailyRange[symbolIndex].calculatedDate = rangeDate; // Use correct date (today or yesterday)
     g_DailyRange[symbolIndex].isValid = true;
 
     if(InpVerboseLogs)
