@@ -2,14 +2,18 @@
 //|                                           Zeus_Simplified.mq5    |
 //|                                    Version Simplifiée - SL/TP Fixe|
 //|                                                                    |
-//| - SL: 0.70% du prix d'entrée                                      |
-//| - TP: 3.50% du prix d'entrée (1:5 RR)                            |
-//| - BE à 1R (0.70% profit)                                          |
+//| OPTIMISATIONS v2.1 (réduction DD):                               |
+//| - SL: 1.00% du prix d'entrée (1R)                                |
+//| - TP: 3.00% du prix d'entrée (1:3 RR)                            |
+//| - BE à 1R (1.00% profit)                                          |
+//| - TIME STOP: Fermeture auto après 48h                            |
+//| - FILTRE ADX: Skip trades si RANGING (ADX < 20)                  |
+//| - Signaux minimum: 4/10 (au lieu de 6/10)                        |
 //| - 10 signaux techniques pour scoring                              |
 //| - Pas de trades opposés (logique directionnelle)                  |
 //+------------------------------------------------------------------+
 #property copyright "Zeus Trading System - Simplified"
-#property version   "2.00"
+#property version   "2.10"
 #property strict
 
 #include <Trade\Trade.mqh>
@@ -22,9 +26,10 @@ input double InpMaxDailyLoss = 3.0;            // Perte quotidienne max (%) - ST
 input int    InpMaxPositions = 10;             // Positions simultanées max
 
 input group "=== SL/TP FIXE ==="
-input double InpSL_Percent = 0.70;             // Stop Loss (% du prix) - 1R
-input double InpTP_Percent = 3.50;             // Take Profit (% du prix) - 5R
-input double InpBE_TriggerR = 1.0;             // Break Even à XR (1.0 = 1R = 0.70%)
+input double InpSL_Percent = 1.00;             // Stop Loss (% du prix) - 1R
+input double InpTP_Percent = 3.00;             // Take Profit (% du prix) - 3R
+input double InpBE_TriggerR = 1.0;             // Break Even à XR (1.0 = 1R = 1.00%)
+input int    InpMaxHoldingHours = 48;          // Time Stop: fermeture auto après X heures
 
 input group "=== TRADING HOURS ==="
 input int    InpTradingStartHour = 6;          // Heure début trading
@@ -52,7 +57,7 @@ input double InpADX_TrendingThreshold = 25.0;  // ADX > 25 = Trending
 input double InpADX_RangingThreshold = 20.0;   // ADX < 20 = Ranging
 
 input group "=== SCORING SIGNALS ==="
-input int    InpMinSignalsRequired = 6;        // Signaux minimum requis (sur 10)
+input int    InpMinSignalsRequired = 4;        // Signaux minimum requis (sur 10) - OPTIMISÉ
 
 input group "=== GENERAL SETTINGS ==="
 input int    InpMagicNumber = 789456;          // Magic Number
@@ -174,6 +179,9 @@ void OnTick()
     //--- Daily reset
     CheckDailyReset();
 
+    //--- Close positions held too long (Time Stop)
+    CloseOldPositions();
+
     //--- Update Break Even for all positions
     UpdateAllBreakEven();
 
@@ -248,6 +256,13 @@ void AnalyzeSymbol(string symbol, int symbolIndex)
 
     //--- Market Regime Detection (ADX)
     string marketRegime = DetectMarketRegime(symbolIndex);
+
+    //--- FILTRE: Skip si marché RANGING (ADX < 20)
+    if(marketRegime == "RANGING")
+    {
+        if(InpVerboseLogs) Print("Marché RANGING (ADX < 20) - Skip trade: ", symbol);
+        return;
+    }
 
     //--- SCORING 10 SIGNAUX TECHNIQUES
     int signalsTotal = 10;
@@ -648,6 +663,33 @@ bool CheckDailyLossLimit()
     }
 
     return true;
+}
+
+//+------------------------------------------------------------------+
+//| Close positions held longer than max hours (Time Stop)          |
+//+------------------------------------------------------------------+
+void CloseOldPositions()
+{
+    datetime currentTime = TimeCurrent();
+
+    for(int i = PositionsTotal() - 1; i >= 0; i--)
+    {
+        ulong ticket = PositionGetTicket(i);
+        if(ticket <= 0) continue;
+        if(PositionGetInteger(POSITION_MAGIC) != InpMagicNumber) continue;
+
+        datetime openTime = (datetime)PositionGetInteger(POSITION_TIME);
+        int holdingHours = (int)((currentTime - openTime) / 3600);
+
+        if(holdingHours >= InpMaxHoldingHours)
+        {
+            string symbol = PositionGetString(POSITION_SYMBOL);
+            if(g_Trade.PositionClose(ticket))
+            {
+                Print(">>> TIME STOP: Position fermée après ", holdingHours, "h | ", symbol, " | Ticket: ", ticket);
+            }
+        }
+    }
 }
 
 //+------------------------------------------------------------------+
