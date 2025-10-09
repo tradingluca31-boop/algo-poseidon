@@ -1,0 +1,23 @@
+{
+  "permissions": {
+    "allow": [
+      "Read(//c/Users/lbye3/Downloads/**)",
+      "Read(//c/tmp/**)",
+      "Bash(git config:*)",
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
+      "Bash(git push:*)",
+      "Bash(git clone:*)",
+      "Bash(git pull:*)",
+      "Read(//c/Users/lbye3/**)",
+      "Bash(cat:*)",
+      "Bash(git remote set-url:*)",
+      "Bash(copy:*)",
+      "Bash(curl -s \"https://raw.githubusercontent.com/tradingluca31-boop/algo-poseidon/main/Poseidon%20Final.mq5\")",
+      "Bash(git rebase:*)",
+      "Bash(pip --version)"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}
