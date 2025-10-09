@@ -20,8 +20,9 @@ print("🚀 ENRICHISSEMENT DONNÉES ML - XAUUSD + DXY/VIX/US10Y")
 print("=" * 80)
 
 # ==================== CONFIGURATION ====================
-INPUT_CSV = "XAUUSD_ML_Data_10Y_2025.10.09.csv"  # Fichier MQL5
-OUTPUT_CSV = "XAUUSD_COMPLETE_ML_Data.csv"  # Fichier final
+# Détection automatique du fichier XAUUSD le plus récent
+INPUT_CSV_PATTERN = "XAUUSD_ML_Data_*Y_*.csv"  # Pattern pour trouver le fichier
+OUTPUT_CSV = "XAUUSD_COMPLETE_ML_Data_20Y.csv"  # Fichier final 20 ans
 
 # Symboles Yahoo Finance
 YAHOO_SYMBOLS = {
@@ -160,11 +161,14 @@ def calculate_indicators(df, prefix=''):
 def download_yahoo_data(symbol, start_date, end_date, name):
     """
     Télécharge les données depuis Yahoo Finance
+    IMPORTANT: Yahoo limite les données H1 à 730 jours (2 ans)
+    On utilise donc les données journalières (1d) disponibles sur 10+ ans
     """
     print(f"\n📥 Téléchargement {name} ({symbol})...")
 
     try:
-        data = yf.download(symbol, start=start_date, end=end_date, interval='1h', progress=False)
+        # Utiliser interval='1d' au lieu de '1h' pour avoir 10 ans d'historique
+        data = yf.download(symbol, start=start_date, end=end_date, interval='1d', progress=False)
 
         if data.empty:
             print(f"   ⚠️  Aucune donnée disponible pour {name}")
@@ -174,12 +178,24 @@ def download_yahoo_data(symbol, start_date, end_date, name):
         if isinstance(data.columns, pd.MultiIndex):
             data.columns = data.columns.get_level_values(0)
 
-        data.columns = [col.lower() for col in data.columns]
+        # Reset index pour avoir la colonne Date
         data = data.reset_index()
-        data = data.rename(columns={'date': 'time', 'datetime': 'time'})
+
+        # Normaliser les noms de colonnes
+        data.columns = [col.lower() for col in data.columns]
+
+        # Renommer Date/Datetime en time
+        if 'date' in data.columns:
+            data = data.rename(columns={'date': 'time'})
+        elif 'datetime' in data.columns:
+            data = data.rename(columns={'datetime': 'time'})
 
         # S'assurer que time est en datetime
-        data['time'] = pd.to_datetime(data['time'])
+        if 'time' in data.columns:
+            data['time'] = pd.to_datetime(data['time'])
+        else:
+            print(f"   ⚠️  Colonne 'time' introuvable. Colonnes disponibles: {data.columns.tolist()}")
+            return None
 
         print(f"   ✅ {len(data)} barres téléchargées pour {name}")
         return data
@@ -196,18 +212,28 @@ print("\n" + "=" * 80)
 print("📂 CHARGEMENT DONNÉES XAUUSD")
 print("=" * 80)
 
-csv_path = os.path.join(r"C:\Users\lbye3\AppData\Roaming\MetaQuotes\Terminal\Common\Files", INPUT_CSV)
+# Trouver le fichier XAUUSD le plus récent
+base_path = r"C:\Users\lbye3\AppData\Roaming\MetaQuotes\Terminal\Common\Files"
+import glob
 
-if not os.path.exists(csv_path):
-    print(f"❌ ERREUR: Fichier introuvable: {csv_path}")
+# Chercher tous les fichiers XAUUSD_ML_Data
+pattern = os.path.join(base_path, "XAUUSD_ML_Data_*Y_*.csv")
+files = glob.glob(pattern)
+
+if not files:
+    print(f"❌ ERREUR: Aucun fichier XAUUSD trouvé dans {base_path}")
     print(f"Vérifiez que le script MQL5 a bien été exécuté.")
     exit(1)
+
+# Prendre le plus récent
+csv_path = max(files, key=os.path.getmtime)
+print(f"📂 Fichier détecté: {os.path.basename(csv_path)}")
 
 df_xauusd = pd.read_csv(csv_path)
 df_xauusd['time'] = pd.to_datetime(df_xauusd['time'])
 df_xauusd = df_xauusd.sort_values('time').reset_index(drop=True)
 
-print(f"✅ {len(df_xauusd)} lignes chargées depuis {INPUT_CSV}")
+print(f"✅ {len(df_xauusd)} lignes chargées depuis {os.path.basename(csv_path)}")
 print(f"Période: {df_xauusd['time'].min()} → {df_xauusd['time'].max()}")
 
 # Extraire les dates
@@ -252,15 +278,17 @@ for name, df in yahoo_data.items():
     df = df.sort_values('time')
 
     # Merge asof: trouve la valeur la plus proche dans le temps
+    # Les données Yahoo sont journalières, XAUUSD est H1
+    # Chaque barre XAUUSD H1 récupère les valeurs du jour correspondant
     df_final = pd.merge_asof(
         df_final,
         df.drop(columns=['open', 'high', 'low', 'close', 'volume'], errors='ignore'),
         on='time',
-        direction='nearest',
-        tolerance=pd.Timedelta('2h')  # Max 2h d'écart
+        direction='backward',  # Utilise la dernière valeur journalière disponible
+        tolerance=pd.Timedelta('2d')  # Max 2 jours d'écart (weekend)
     )
 
-    print(f"   ✅ {name} fusionné")
+    print(f"   ✅ {name} fusionné (données journalières répliquées sur H1)")
 
 # 5. Nettoyer les NaN
 print(f"\n🧹 Nettoyage des valeurs manquantes...")

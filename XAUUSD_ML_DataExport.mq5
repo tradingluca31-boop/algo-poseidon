@@ -8,7 +8,7 @@
 #property strict
 
 //======================== INPUTS ========================
-input int    InpYearsBack        = 10;      // Nombre d'années à exporter
+input int    InpYearsBack        = 20;      // Nombre d'années à exporter (2005-2025)
 input string InpSymbol           = "XAUUSD"; // Symbole à analyser
 input ENUM_TIMEFRAMES InpTF      = PERIOD_H1; // Timeframe
 input bool   InpIncludeTarget    = true;    // Calculer WIN/LOSS (target)
