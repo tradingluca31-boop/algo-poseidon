@@ -23,7 +23,7 @@ print("=" * 80)
 
 # ==================== CONFIGURATION ====================
 DATA_CSV = "XAUUSD_COMPLETE_ML_Data_20Y_ENGINEERED.csv"
-MODEL_FILE = "xauusd_ensemble_model.pkl"  # Ou xauusd_lightgbm_optimized_model.pkl
+MODEL_FILE = "xauusd_lightgbm_optimized_model.pkl"  # Généré par Optuna
 OUTPUT_MODEL = "xauusd_calibrated_70percent_model.pkl"
 
 # Objectifs de calibration
