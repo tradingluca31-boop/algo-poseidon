@@ -62,9 +62,9 @@ print("\n" + "="*80)
 print("PREPARATION MERGE")
 print("="*80)
 
-# Normaliser les dates à minuit UTC pour le merge
+# Normaliser les dates à minuit et retirer les timezones
 df_mt5['date'] = df_mt5['time'].dt.normalize()
-df_macro['date'] = df_macro['date'].dt.normalize()
+df_macro['date'] = pd.to_datetime(df_macro['date']).dt.tz_localize(None).dt.normalize()
 
 # Garder uniquement les colonnes nécessaires du macro (DXY, VIX, US10Y, SP500, NASDAQ, DOW)
 macro_cols = ['date', 'DXY', 'VIX', 'US10Y', 'SP500', 'NASDAQ', 'DOW']
